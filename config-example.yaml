@@ -1,0 +1,21 @@
+logLevel: INFO
+
+srcType: Amazon_S3
+srcBucketName: src-bucket
+srcBucketPrefix:
+srcRegion: us-west-2
+srcCredential: src
+
+destBucketName: dest-bucket
+destBucketPrefix:
+destRegion: cn-north-1
+destCredential: dest
+desStorageClass: STANDARD
+
+jobTableName: test-table
+jobQueueName: test-queue
+
+options:
+  chunkSize: 5
+  multipartThreshold: 10
+  maxKeys: 1000
