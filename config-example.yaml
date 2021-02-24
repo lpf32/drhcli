@@ -5,12 +5,14 @@ srcBucketName: src-bucket
 srcBucketPrefix:
 srcRegion: us-west-2
 srcCredential: src
+SrcInCurrentAccount: false
 
 destBucketName: dest-bucket
 destBucketPrefix:
 destRegion: cn-north-1
-destCredential: dest
-desStorageClass: STANDARD
+destCredential:
+destStorageClass: STANDARD
+destInCurrentAccount: true
 
 jobTableName: test-table
 jobQueueName: test-queue
@@ -19,3 +21,7 @@ options:
   chunkSize: 5
   multipartThreshold: 10
   maxKeys: 1000
+  messageBatchSize: 10
+  finderDepth: 0
+  finderNumber: 1
+  workerNumber: 4

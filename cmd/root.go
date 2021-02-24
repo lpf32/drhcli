@@ -38,8 +38,8 @@ var (
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "drhcli",
-	Short: "A cli to run data replication hub jobs",
-	Long: `A cli to run data replication hub jobs,
+	Short: "A distributed CLI to replicate data to Amazon S3",
+	Long: `A distributed CLI to replicate data to Amazon S3 from other cloud storage services.
 
 Find more information at: https://github.com/daixba/drhcli`,
 
@@ -71,25 +71,33 @@ func init() {
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	viper.SetDefault("srcType", "Amazon_S3")
-	viper.SetDefault("desStorageClass", "STANDARD")
+	viper.SetDefault("destStorageClass", "STANDARD")
 	viper.SetDefault("srcBucketPrefix", "")
+	viper.SetDefault("srcCredential", "")
 	viper.SetDefault("destBucketPrefix", "")
+	viper.SetDefault("destCredential", "")
 
-	viper.SetDefault("options.chunkSize", drh.ChunkSize)
-	viper.SetDefault("options.multipartThreshold", drh.MultipartThreshold)
-	viper.SetDefault("options.maxKeys", drh.MaxKeys)
+	viper.SetDefault("options.chunkSize", drh.DefaultChunkSize)
+	viper.SetDefault("options.multipartThreshold", drh.DefaultMultipartThreshold)
+	viper.SetDefault("options.maxKeys", drh.DefaultMaxKeys)
+	viper.SetDefault("options.messageBatchSize", drh.DefaultMessageBatchSize)
+	viper.SetDefault("options.finderDepth", drh.DefaultFinderDepth)
+	viper.SetDefault("options.finderNumber", drh.DefaultFinderNumber)
+	viper.SetDefault("options.workerNumber", drh.DefaultWorkerNumber)
 
 	viper.BindEnv("srcType", "SOURCE_TYPE")
 	viper.BindEnv("srcBucketName", "SRC_BUCKET_NAME")
 	viper.BindEnv("srcBucketPrefix", "SRC_BUCKET_PREFIX")
 	viper.BindEnv("srcRegion", "SRC_REGION")
 	viper.BindEnv("srcCredential", "SRC_CREDENTIALS")
+	viper.BindEnv("SrcInCurrentAccount", "SRC_IN_CURRENT_ACCOUNT")
 
 	viper.BindEnv("destBucketName", "DEST_BUCKET_NAME")
 	viper.BindEnv("destBucketPrefix", "DEST_BUCKET_PREFIX")
 	viper.BindEnv("destRegion", "DEST_REGION")
 	viper.BindEnv("destCredential", "DEST_CREDENTIALS")
 	viper.BindEnv("destStorageClass", "DEST_STORAGE_CLASS")
+	viper.BindEnv("destInCurrentAccount", "SRC_IN_CURRENT_ACCOUNT")
 
 	viper.BindEnv("jobTableName", "JOB_TABLE_NAME")
 	viper.BindEnv("jobQueueName", "JOB_QUEUE_NAME")
@@ -97,6 +105,10 @@ func initConfig() {
 	viper.BindEnv("options.maxKeys", "MAX_KEYS")
 	viper.BindEnv("options.chunkSize", "CHUNK_SIZE")
 	viper.BindEnv("options.multipartThreshold", "MULTIPART_THRESHOLD")
+	viper.BindEnv("options.messageBatchSize", "MESSAGE_BATCH_SIZE")
+	viper.BindEnv("options.finderDepth", "FINDER_DEPTH")
+	viper.BindEnv("options.finderNumber", "FINDER_NUMBER")
+	viper.BindEnv("options.workerNumber", "WORKER_NUMBER")
 
 	if cfgFile != "" {
 		// Use config file from the flag.
@@ -115,22 +127,32 @@ func initConfig() {
 	// 	fmt.Println("Using config file:", viper.ConfigFileUsed())
 	// }
 
-	cfg = &drh.JobConfig{
-		SrcType:            viper.GetString("srcType"),
-		SrcBucketName:      viper.GetString("srcBucketName"),
-		SrcBucketPrefix:    viper.GetString("srcBucketPrefix"),
-		SrcRegion:          viper.GetString("srcRegion"),
-		SrcCredential:      viper.GetString("srcCredential"),
-		DestBucketName:     viper.GetString("destBucketName"),
-		DestBucketPrefix:   viper.GetString("destBucketPrefix"),
-		DestRegion:         viper.GetString("destRegion"),
-		DestCredential:     viper.GetString("destCredential"),
-		DestStorageClass:   viper.GetString("destStorageClass"),
-		JobTableName:       viper.GetString("jobTableName"),
-		JobQueueName:       viper.GetString("jobQueueName"),
+	options := &drh.JobOptions{
 		ChunkSize:          viper.GetInt("options.chunkSize"),
 		MultipartThreshold: viper.GetInt("options.multipartThreshold"),
-		MaxKeys:            viper.GetInt("options.maxKeys"),
+		MaxKeys:            viper.GetInt32("options.maxKeys"),
+		MessageBatchSize:   viper.GetInt("options.messageBatchSize"),
+		FinderDepth:        viper.GetInt("options.finderDepth"),
+		FinderNumber:       viper.GetInt("options.finderNumber"),
+		WorkerNumber:       viper.GetInt("options.workerNumber"),
+	}
+
+	cfg = &drh.JobConfig{
+		SrcType:              viper.GetString("srcType"),
+		SrcBucketName:        viper.GetString("srcBucketName"),
+		SrcBucketPrefix:      viper.GetString("srcBucketPrefix"),
+		SrcRegion:            viper.GetString("srcRegion"),
+		SrcCredential:        viper.GetString("srcCredential"),
+		SrcInCurrentAccount:  viper.GetBool("SrcInCurrentAccount"),
+		DestBucketName:       viper.GetString("destBucketName"),
+		DestBucketPrefix:     viper.GetString("destBucketPrefix"),
+		DestRegion:           viper.GetString("destRegion"),
+		DestCredential:       viper.GetString("destCredential"),
+		DestStorageClass:     viper.GetString("destStorageClass"),
+		DestInCurrentAccount: viper.GetBool("destInCurrentAccount"),
+		JobTableName:         viper.GetString("jobTableName"),
+		JobQueueName:         viper.GetString("jobQueueName"),
+		JobOptions:           options,
 	}
 
 }
@@ -152,24 +174,26 @@ var runCmd = &cobra.Command{
 For example: drhcli run -t Finder
 
 Supported types:
-	- Finder: Finder is a job that lists and compares objects in source and target buckets, and gets the delta and sends the list to SQS Queue.
+	- Finder: Finder is a job that lists and compares objects in the source and target buckets, and sends the delta list to SQS Queue.
 	- Worker: Worker is a job that consumes the messages from SQS Queue and start the migration
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		log.Printf("Start running %s job", jobType)
+		ctx := context.TODO()
+
+		var job drh.Job
 
 		switch jobType {
 		case "Finder":
-			ctx := context.TODO()
-			f := drh.InitFinder(ctx, cfg)
-			f.CompareAndSend()
+			job = drh.NewFinder(ctx, cfg)
 
 		case "Worker":
-			log.Println("To be updated")
+			job = drh.NewWorker(ctx, cfg)
 
 		default:
 			log.Fatalf("Unknown Job Type - %s. Type must be either Finder or Worker\n, please start again", jobType)
 
 		}
+		job.Run()
 	},
 }
