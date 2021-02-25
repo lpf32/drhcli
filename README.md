@@ -9,15 +9,25 @@ This tool leverages Amazon SQS to distribute the replication processes in many w
 
 ## Installation
 
-Download from ... (To be updated).
+Download the tool from [Release](https://github.com/daixba/drhcli/releases) page.
 
-Or you can clone this repo and build by yourself
-
-To verify the installation, simply run `drhcli version`
+For example, on Linux:
 ```
-$ drhcli version
+release=0.1.0
+curl -LO "https://github.com/daixba/drhcli/releases/download/v${release}/drhcli_${release}_linux_386.tar.gz"
+tar zxvf drhcli_${release}_linux_386.tar.gz
+```
+
+
+
+To verify, simply run `./drhcli version`
+```
+$ ./drhcli version
 drhcli version vX.Y.Z
 ```
+
+> Or you can clone this repo and build by yourself (Go Version >= v1.16)
+
 
 ## Prerequisites
 
@@ -50,6 +60,7 @@ jobTableName: test-table
 jobQueueName: test-queue
 ```
 
+By default, this tool will try to read a `config.yaml` in the same folder, if you create the configuration file in a different folder or with a different file name, please use extra option `--config xxx.yaml` to load your config file.
 
 
 ## Usage

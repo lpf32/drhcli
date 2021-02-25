@@ -55,7 +55,7 @@ func (o *Object) toString() *string {
 	obj, err := json.Marshal(*o)
 
 	if err != nil {
-		log.Printf("Error: %s", err)
+		log.Printf("Unable to convert object to json string - %s", err)
 		return nil
 	}
 
@@ -71,7 +71,7 @@ func newObject(str string) (o *Object) {
 	err := json.Unmarshal([]byte(str), o)
 
 	if err != nil {
-		log.Fatalf("Unalbe to convert string to message - %s", err.Error())
+		log.Printf("Unable to convert string to object - %s", err.Error())
 		return nil
 	}
 	// log.Printf("Key: %s, Size: %d\n", m.Key, m.Size)

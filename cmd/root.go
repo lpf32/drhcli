@@ -123,9 +123,9 @@ func initConfig() {
 
 	// If a config file is found, read it in.
 	viper.ReadInConfig()
-	// if err := viper.ReadInConfig(); err == nil {
-	// 	fmt.Println("Using config file:", viper.ConfigFileUsed())
-	// }
+	if err := viper.ReadInConfig(); err == nil {
+		log.Println("Using config file:", viper.ConfigFileUsed())
+	}
 
 	options := &drh.JobOptions{
 		ChunkSize:          viper.GetInt("options.chunkSize"),
@@ -178,6 +178,11 @@ Supported types:
 	- Worker: Worker is a job that consumes the messages from SQS Queue and start the migration
 `,
 	Run: func(cmd *cobra.Command, args []string) {
+
+		if cfg.SrcBucketName == "" || cfg.DestBucketName == "" {
+			log.Fatalf("Cannot find source or destination bucket name, please check if you have run with a config file or environment variables. Run `drhcli help` for more details")
+		}
+
 		log.Printf("Start running %s job", jobType)
 		ctx := context.TODO()
 

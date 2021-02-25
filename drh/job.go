@@ -36,18 +36,20 @@ type Worker struct {
 	db                   *DBService
 }
 
+// List objects in source bucket
 func (f *Finder) getSourceObjects(token *string, prefix *string) []*Object {
 
 	// log.Printf("Getting source list with token %s", *token)
 
 	result, err := f.srcClient.ListObjects(token, prefix, f.cfg.MaxKeys)
 	if err != nil {
-		log.Fatalf("Fail to get source list - %s\n", err.Error())
+		log.Printf("Fail to get source list - %s\n", err.Error())
 		log.Fatalf("The last token is %s\n", *token)
 	}
 	return result
 }
 
+// List objects in destination bucket, load the list into a map
 func (f *Finder) getTargetObjects(prefix *string) (objects map[string]*int64) {
 
 	log.Printf("Getting target list in /%s\n", *prefix)
@@ -59,8 +61,7 @@ func (f *Finder) getTargetObjects(prefix *string) (objects map[string]*int64) {
 	for token != "End" {
 		jobs, err := f.desClient.ListObjects(&token, prefix, f.cfg.MaxKeys)
 		if err != nil {
-			log.Fatal(err.Error())
-			log.Fatalf("Fail to create client - %s", err.Error())
+			log.Fatalf("Error listing objects in destination bucket - %s\n", err.Error())
 		}
 
 		// fmt.Printf("Size is %d\n", len(jobs))
@@ -203,7 +204,7 @@ func getCredentials(param string, inCurrentAccount bool, sm *SsmService) *S3Cred
 			credMap := make(map[string]string)
 			err := json.Unmarshal([]byte(*credStr), &credMap)
 			if err != nil {
-				log.Fatalf("Unable to parse credentials - %s\n", err.Error())
+				log.Printf("Warning - Unable to parse the credentials string, please make sure the it is a valid json format. - %s\n", err.Error())
 			} else {
 				cred.accessKey = credMap["access_key_id"]
 				cred.secretKey = credMap["secret_access_key"]
@@ -219,9 +220,11 @@ func getCredentials(param string, inCurrentAccount bool, sm *SsmService) *S3Cred
 // NewFinder creates a new finder instance
 func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 
+	sqs, _ := NewSqsService(ctx, cfg.JobQueueName)
+
 	sm, err := NewSsmService(ctx)
 	if err != nil {
-		log.Fatalf("Unable to load credentials, use default seeting - %s\n", err.Error())
+		log.Printf("Warning - Unable to load credentials, use default setting - %s\n", err.Error())
 	}
 
 	srcCred := getCredentials(cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
@@ -234,8 +237,6 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
-
-	sqs, _ := NewSqsService(ctx, cfg.JobQueueName)
 
 	f = &Finder{
 		srcClient: srcClient,
@@ -252,9 +253,11 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 
 	log.Printf("Source Type is %s\n", cfg.SrcType)
 
+	sqs, _ := NewSqsService(ctx, cfg.JobQueueName)
+
 	sm, err := NewSsmService(ctx)
 	if err != nil {
-		log.Fatalf("Unable to load credentials, use default seeting - %s\n", err.Error())
+		log.Printf("Warning - Unable to load credentials, use default setting - %s\n", err.Error())
 	}
 
 	srcCred := getCredentials(cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
@@ -267,8 +270,6 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
-
-	sqs, _ := NewSqsService(ctx, cfg.JobQueueName)
 
 	return &Worker{
 		srcClient: srcClient,
@@ -414,12 +415,12 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan bool, resultCh chan
 	uploadID, err := w.desClient.CreateMultipartUpload(obj.Key)
 
 	if err != nil {
-		log.Fatalf("Unable to create upload ID - %s\n", err.Error())
+		log.Fatalf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
 	}
 
 	totalParts := int(obj.Size/int64(chunkSize)) + 1
 
-	log.Printf("Total parts are %d\n", totalParts)
+	log.Printf("Total parts are %d - for %s\n", totalParts, obj.Key)
 
 	wg.Add(totalParts)
 

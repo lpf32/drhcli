@@ -83,8 +83,7 @@ func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string,
 	config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	// config, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatalf("Unable to get the config - %s\n", err.Error())
-
+		log.Fatalf("Error creating a S3 Client, unable to load default configuration - %s\n", err.Error())
 	}
 
 	client := s3.NewFromConfig(config, func(o *s3.Options) {
@@ -301,7 +300,7 @@ func (c *S3Client) PutObject(key string, body []byte, storageClass string) (etag
 
 	output, err := c.client.PutObject(c.ctx, input)
 	if err != nil {
-		log.Fatalf("Got error uploading file - %s\n", err.Error())
+		log.Printf("S3> Got an error uploading file - %s\n", err.Error())
 		// return nil, err
 	} else {
 		_etag := strings.Trim(*output.ETag, "\"")

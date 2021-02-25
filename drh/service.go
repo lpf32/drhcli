@@ -2,7 +2,6 @@ package drh
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strconv"
 
@@ -125,8 +124,7 @@ func NewSqsService(ctx context.Context, queueName string) (*SqsService, error) {
 	// Only to use default config here
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatal("configuration error, " + err.Error())
-		return nil, err
+		log.Fatalf("Error creating a SQS Client, unable to load default configuration - %s\n", err.Error())
 	}
 
 	client := sqs.NewFromConfig(cfg)
@@ -136,9 +134,8 @@ func NewSqsService(ctx context.Context, queueName string) (*SqsService, error) {
 
 	result, err := client.GetQueueUrl(ctx, input)
 	if err != nil {
-		fmt.Println("Got an error getting the queue URL:")
-		fmt.Println(err.Error())
-		return nil, err
+		log.Fatalf("Unable to get the queue URL, please make sure queue %s exists - %s\n", queueName, err.Error())
+		// return nil, err
 	}
 
 	queueURL := *result.QueueUrl
@@ -200,7 +197,7 @@ func (ss *SqsService) SendMessageInBatch(batch []*Object) {
 	_, err := ss.client.SendMessageBatch(ss.ctx, input)
 
 	if err != nil {
-		log.Fatalf(err.Error())
+		log.Fatalf("Unable to send the messages in batch to SQS Queue - %s\n", err.Error())
 	}
 
 	// log.Printf("Sent %d messages successfully\n", len(resp.Successful))
@@ -215,8 +212,7 @@ func (ss *SqsService) ReceiveMessages() (obj *Object, receiptHandle *string) {
 	output, err := ss.client.ReceiveMessage(ss.ctx, input)
 
 	if err != nil {
-		log.Fatalf("Unable to read from Queue - %s", err.Error())
-		return nil, nil
+		log.Fatalf("Unable to read message from Queue %s - %s", ss.queueName, err.Error())
 	}
 
 	// If no messages in the queue
@@ -250,7 +246,7 @@ func (ss *SqsService) DeleteMessage(rh *string) (ok bool) {
 	_, err := ss.client.DeleteMessage(ss.ctx, input)
 
 	if err != nil {
-		log.Fatalf("Unable to read from Queue - %s", err.Error())
+		log.Fatalf("Unable to delete message from Queue %s - %s", ss.queueName, err.Error())
 		return false
 	}
 
@@ -268,7 +264,7 @@ func (ss *SqsService) ChangeVisibilityTimeout(rh *string, seconds int32) (ok boo
 	_, err := ss.client.ChangeMessageVisibility(ss.ctx, input)
 
 	if err != nil {
-		log.Fatalf("Unable to read from Queue - %s", err.Error())
+		log.Printf("Unable to Change Visibility Timeout - %s", err.Error())
 		return false
 	}
 
@@ -294,7 +290,7 @@ func (s *SsmService) GetParameterValue(param *string, withDecryption bool) *stri
 	output, err := s.client.GetParameter(s.ctx, input)
 
 	if err != nil {
-		log.Fatalf("Unable to read from Queue - %s", err.Error())
+		log.Printf("Get Parameter Value of %s from SSM - %s", *param, err.Error())
 		return nil
 	}
 	return output.Parameter.Value
