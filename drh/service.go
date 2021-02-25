@@ -87,7 +87,7 @@ type Message struct {
 func NewSsmService(ctx context.Context) (*SsmService, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		log.Fatalln("unable to load SDK config, " + err.Error())
+		log.Printf("unable to load SDK config to create SSM client - %s\n", err.Error())
 		return nil, err
 	}
 
@@ -246,7 +246,7 @@ func (ss *SqsService) DeleteMessage(rh *string) (ok bool) {
 	_, err := ss.client.DeleteMessage(ss.ctx, input)
 
 	if err != nil {
-		log.Fatalf("Unable to delete message from Queue %s - %s", ss.queueName, err.Error())
+		log.Printf("Unable to delete message from Queue %s - %s", ss.queueName, err.Error())
 		return false
 	}
 
@@ -290,7 +290,7 @@ func (s *SsmService) GetParameterValue(param *string, withDecryption bool) *stri
 	output, err := s.client.GetParameter(s.ctx, input)
 
 	if err != nil {
-		log.Printf("Get Parameter Value of %s from SSM - %s", *param, err.Error())
+		log.Printf("Error getting Parameter Value of %s from SSM - %s", *param, err.Error())
 		return nil
 	}
 	return output.Parameter.Value

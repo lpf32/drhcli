@@ -17,8 +17,9 @@ type Part struct {
 
 // TransferResult is ...
 type TransferResult struct {
-	status, etag string
-	err          error
+	status string
+	etag   *string
+	err    error
 }
 
 // Finder struct
@@ -201,19 +202,22 @@ func getCredentials(param string, inCurrentAccount bool, sm *SsmService) *S3Cred
 			cred.noSignRequest = true
 		} else {
 			credStr := sm.GetParameterValue(&param, true)
-			credMap := make(map[string]string)
-			err := json.Unmarshal([]byte(*credStr), &credMap)
-			if err != nil {
-				log.Printf("Warning - Unable to parse the credentials string, please make sure the it is a valid json format. - %s\n", err.Error())
+			if credStr != nil {
+				credMap := make(map[string]string)
+				err := json.Unmarshal([]byte(*credStr), &credMap)
+				if err != nil {
+					log.Printf("Warning - Unable to parse the credentials string, please make sure the it is a valid json format. - %s\n", err.Error())
+				} else {
+					cred.accessKey = credMap["access_key_id"]
+					cred.secretKey = credMap["secret_access_key"]
+				}
+				// log.Println(*credStr)
+				// log.Println(credMap)
 			} else {
-				cred.accessKey = credMap["access_key_id"]
-				cred.secretKey = credMap["secret_access_key"]
+				log.Printf("Credential parameter %s ignored, use default configuration\n", param)
 			}
-			// log.Println(*credStr)
-			// log.Println(credMap)
 		}
 	}
-
 	return cred
 }
 
@@ -374,13 +378,13 @@ func (w *Worker) migrateSmallFile(obj *Object, transferCh chan bool, resultCh ch
 
 	body, err := w.srcClient.GetObject(obj.Key, obj.Size, 0, obj.Size, "null")
 	if err != nil {
-		log.Fatalln(err.Error())
+		// log.Fatalln(err.Error())
 		status = "ERROR"
 
 	} else {
 		etag, err = w.desClient.PutObject(obj.Key, body, w.cfg.DestStorageClass)
 		if err != nil {
-			log.Fatalln(err.Error())
+			// log.Fatalln(err.Error())
 			status = "ERROR"
 		}
 
@@ -388,7 +392,7 @@ func (w *Worker) migrateSmallFile(obj *Object, transferCh chan bool, resultCh ch
 
 	resultCh <- &TransferResult{
 		status: status,
-		etag:   *etag,
+		etag:   etag,
 		err:    err,
 	}
 
@@ -415,7 +419,7 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan bool, resultCh chan
 	uploadID, err := w.desClient.CreateMultipartUpload(obj.Key)
 
 	if err != nil {
-		log.Fatalf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
+		log.Printf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
 	}
 
 	totalParts := int(obj.Size/int64(chunkSize)) + 1
@@ -444,13 +448,13 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan bool, resultCh chan
 
 			body, err := w.srcClient.GetObject(obj.Key, obj.Size, int64(i*chunkSize), int64(chunkSize), "null")
 			if err != nil {
-				log.Fatalln(err.Error())
+				// log.Fatalln(err.Error())
 				status = "ERROR"
 			} else {
 				log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucketName, obj.Key, partNumber)
 				_etag, err = w.desClient.UploadPart(obj.Key, uploadID, body, partNumber)
 				if err != nil {
-					log.Fatalln(err.Error())
+					// log.Fatalln(err.Error())
 					status = "ERROR"
 				}
 				log.Printf("----->Upload completed, etag is %s\n", *_etag)
@@ -480,7 +484,7 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan bool, resultCh chan
 
 	etag, err = w.desClient.CompleteMultipartUpload(obj.Key, uploadID, parts)
 	if err != nil {
-		log.Fatalf("Complete upload failed - %s\n", err.Error())
+		log.Printf("Complete upload failed - %s\n", err.Error())
 		w.desClient.AbortMultipartUpload(obj.Key, uploadID)
 		status = "ERROR"
 	} else {
@@ -489,7 +493,7 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan bool, resultCh chan
 
 	resultCh <- &TransferResult{
 		status: status,
-		etag:   *etag,
+		etag:   etag,
 		err:    err,
 	}
 

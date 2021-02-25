@@ -127,7 +127,7 @@ func (c *S3Client) GetObject(key string, size, start, chunkSize int64, version s
 
 	output, err := c.client.GetObject(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to download %s with %d bytes start from %d - %s\n", key, size, start, err.Error())
 		return nil, err
 	}
 
@@ -140,7 +140,7 @@ func (c *S3Client) GetObject(key string, size, start, chunkSize int64, version s
 	s, err := io.ReadAll(output.Body)
 
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to read the content of %s - %s\n", key, err.Error())
 		return nil, err
 	}
 	return s, nil
@@ -164,7 +164,7 @@ func (c *S3Client) listObjectFn(continuationToken, prefix, delimiter *string, ma
 
 	output, err := c.client.ListObjectsV2(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to list objects in /%s - %s\n", *prefix, err.Error())
 		return nil, err
 	}
 
@@ -242,7 +242,7 @@ func (c *S3Client) ListObjects(continuationToken, prefix *string, maxKeys int32)
 
 	output, err := c.listObjectFn(continuationToken, prefix, &delimiter, maxKeys)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to list object in /%s - %s\n", *prefix, err.Error())
 		return nil, err
 	}
 
@@ -270,7 +270,7 @@ func (c *S3Client) HeadObject(key string) {
 
 	output, err := c.client.HeadObject(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to head object for %s - %s\n", key, err.Error())
 		// return err
 	}
 
@@ -335,7 +335,7 @@ func (c *S3Client) UploadPart(key string, uploadID *string, body []byte, partNum
 
 	output, err := c.client.UploadPart(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to upload part for %s - %s\n", key, err.Error())
 		// return nil, err
 	} else {
 		_etag := strings.Trim(*output.ETag, "\"")
@@ -373,7 +373,7 @@ func (c *S3Client) CompleteMultipartUpload(key string, uploadID *string, parts [
 
 	output, err := c.client.CompleteMultipartUpload(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to complete multipart upload for %s - %s\n", key, err.Error())
 	} else {
 		// etag = output.ETag
 		_etag := strings.Trim(*output.ETag, "\"")
@@ -398,7 +398,7 @@ func (c *S3Client) CreateMultipartUpload(key string) (uploadID *string, err erro
 
 	output, err := c.client.CreateMultipartUpload(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to create multipart upload for %s - %s\n", key, err.Error())
 	} else {
 		uploadID = output.UploadId
 		// log.Printf("S3> Create Multipart Upload for %s - upload id is %s\n", key, *output.UploadId)
@@ -418,7 +418,7 @@ func (c *S3Client) ListParts(key, uploadID string) {
 
 	output, err := c.client.ListParts(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to list parts for %s - %s\n", key, err.Error())
 		// return nil, err
 	}
 
@@ -444,7 +444,7 @@ func (c *S3Client) ListMultipartUploads(key string) {
 
 	output, err := c.client.ListMultipartUploads(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to list multipart upload for %s - %s\n", key, err.Error())
 		// return nil, err
 	}
 
@@ -456,7 +456,7 @@ func (c *S3Client) ListMultipartUploads(key string) {
 
 // AbortMultipartUpload is
 func (c *S3Client) AbortMultipartUpload(key string, uploadID *string) {
-	log.Println("S3> Abort Multipart Upload")
+	// log.Printf("S3> Abort multipart upload for %s with upload id %s\n", key, *uploadID)
 
 	input := &s3.AbortMultipartUploadInput{
 		Bucket:   &c.bucket,
@@ -466,10 +466,9 @@ func (c *S3Client) AbortMultipartUpload(key string, uploadID *string) {
 
 	_, err := c.client.AbortMultipartUpload(c.ctx, input)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Unable to abort multipart upload for %s - %s\n", key, err.Error())
 		// return nil, err
 	}
-	fmt.Printf("S3> Abort multipart upload for %s with upload id %s}", key, key)
 
 	// for _, upload := range output.Uploads {
 	// 	fmt.Println(upload.Key)
