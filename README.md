@@ -7,6 +7,21 @@ A distributed CLI to replicate data to Amazon S3 from other cloud storage servic
 This tool leverages Amazon SQS to distribute the replication processes in many worker nodes. You can run as many worker nodes as required concurrently for large volume of objects. Each worker node will consume the messages from Amazon SQS and start transferring from the source to destination. Each message contains information that represents a object in cloud storage service to be replicated.
 
 
+## TODO
+
+Below features are planed in the first offical release
+
+- [x] Basical Project Structure
+- [ ] Store replication status in DynamoDB
+- [ ] Support replicate Metadata info (Head Object)
+- [ ] Support S3 Event Messages
+- [ ] Support Mulipart uploads when upload ID already exists
+- [ ] Support Other cloud storage service
+- [ ] Implement heart beat for large object transfer (Extend visibitity of the message)
+- [ ] Create docker image
+- [ ] Create Unit Test cases
+
+
 ## Installation
 
 Download the tool from [Release](https://github.com/daixba/drhcli/releases) page.
@@ -67,7 +82,7 @@ By default, this tool will try to read a `config.yaml` in the same folder, if yo
 
 Run `drhcli help` for more details.
 ```
-$ drhcli help
+$ ./drhcli help
 A distributed CLI to replicate data to Amazon S3 from other cloud storage services.
 
 Find more information at: https://github.com/daixba/drhcli
@@ -92,11 +107,12 @@ To actually start the job, use `drhcli run` command.
 - Start Finder Job
 
 ```
-drhcli run -t Finder
+./drhcli run -t Finder
 ```
 
-- Start Worker
+- Start Worker Job
 
 ```
-drhcli run -t Worker
+./drhcli run -t Worker
 ```
+
