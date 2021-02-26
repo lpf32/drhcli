@@ -96,8 +96,8 @@ func initConfig() {
 	viper.BindEnv("destBucketPrefix", "DEST_BUCKET_PREFIX")
 	viper.BindEnv("destRegion", "DEST_REGION")
 	viper.BindEnv("destCredential", "DEST_CREDENTIALS")
+	viper.BindEnv("destInCurrentAccount", "DEST_IN_CURRENT_ACCOUNT")
 	viper.BindEnv("destStorageClass", "DEST_STORAGE_CLASS")
-	viper.BindEnv("destInCurrentAccount", "SRC_IN_CURRENT_ACCOUNT")
 
 	viper.BindEnv("jobTableName", "JOB_TABLE_NAME")
 	viper.BindEnv("jobQueueName", "JOB_QUEUE_NAME")
