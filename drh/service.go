@@ -2,11 +2,15 @@ package drh
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dtype "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -14,10 +18,10 @@ import (
 
 // Item holds info about the items to be stored in DynamoDB
 type Item struct {
-	ObjectKey, StorageClass, DesBucket, DesKey, Status, Version string
-	Size                                                        int64
-	StartTime, EndTime                                          int
-	ExtraInfo                                                   Metadata
+	ObjectKey, JobStatus, Etag, UploadID string
+	Size, StartTimestamp, EndTimestamp   int64
+	StartTime, EndTime                   string
+	// ExtraInfo               Metadata
 }
 
 // DBService is a wrapper service used to interact with Amazon DynamoDB
@@ -249,23 +253,22 @@ func (ss *SqsService) DeleteMessage(rh *string) (ok bool) {
 }
 
 // ChangeVisibilityTimeout function is used to change the Visibility Timeout of a message
-func (ss *SqsService) ChangeVisibilityTimeout(rh *string, seconds int32) (ok bool) {
-	input := &sqs.ChangeMessageVisibilityInput{
-		QueueUrl:          &ss.queueURL,
-		ReceiptHandle:     rh,
-		VisibilityTimeout: seconds,
-	}
-	_, err := ss.client.ChangeMessageVisibility(ss.ctx, input)
+// func (ss *SqsService) ChangeVisibilityTimeout(rh *string, seconds int32) (ok bool) {
+// 	input := &sqs.ChangeMessageVisibilityInput{
+// 		QueueUrl:          &ss.queueURL,
+// 		ReceiptHandle:     rh,
+// 		VisibilityTimeout: seconds,
+// 	}
+// 	_, err := ss.client.ChangeMessageVisibility(ss.ctx, input)
 
-	if err != nil {
-		log.Printf("Unable to Change Visibility Timeout - %s", err.Error())
-		return false
-	}
+// 	if err != nil {
+// 		log.Printf("Unable to Change Visibility Timeout - %s", err.Error())
+// 		return false
+// 	}
 
-	// log.Printf(output)
-	return true
-
-}
+// 	// log.Printf(output)
+// 	return true
+// }
 
 // IsQueueEmpty is a function to check if the Queue is empty or not
 func (ss *SqsService) IsQueueEmpty() bool {
@@ -289,4 +292,109 @@ func (s *SsmService) GetParameterValue(param *string, withDecryption bool) *stri
 		return nil
 	}
 	return output.Parameter.Value
+}
+
+// CreateItem is a function to ...
+func (db *DBService) CreateItem(o *Object, uploadID *string) error {
+	log.Printf("Create a record of %s in DynamoDB\n", o.Key)
+
+	// item := make(map[string]dtype.AttributeValue)
+	// item["objectKey"] = &dtype.AttributeValueMemberS{Value: o.Key}
+	// item["size"] = &dtype.AttributeValueMemberN{Value: fmt.Sprintf("%d", o.Size)}
+	// item["status"] = &dtype.AttributeValueMemberS{Value: "STARTED"}
+	// item["startTime"] = &dtype.AttributeValueMemberS{Value: time.Now().Format("2006/01/02 15:04:05")}
+	// item["startTimestamp"] = &dtype.AttributeValueMemberN{Value: fmt.Sprintf("%d", time.Now().Unix())}
+
+	item := &Item{
+		ObjectKey:      o.Key,
+		Size:           o.Size,
+		JobStatus:      "STARTED",
+		StartTime:      time.Now().Format("2006/01/02 15:04:05"),
+		StartTimestamp: time.Now().Unix(),
+		// UploadID:       *uploadID,
+	}
+	itemAttr, err := attributevalue.MarshalMap(item)
+
+	if err != nil {
+		log.Printf("Unable to Marshal DynamoDB attributes for %s - %s\n", o.Key, err.Error())
+	} else {
+		input := &dynamodb.PutItemInput{
+			TableName: &db.tableName,
+			Item:      itemAttr,
+		}
+
+		_, err = db.client.PutItem(db.ctx, input)
+
+		if err != nil {
+			log.Printf("Error creating a record of %s in DynamoDB - %s\n", o.Key, err.Error())
+			// return nil
+		}
+	}
+
+	return err
+}
+
+// UpdateItem is a function to ...
+func (db *DBService) UpdateItem(key *string, result *TransferResult) error {
+	log.Printf("Update a record of %s in DynamoDB\n", *key)
+
+	keyAttr := make(map[string]dtype.AttributeValue)
+	keyAttr["ObjectKey"] = &dtype.AttributeValueMemberS{Value: *key}
+
+	expr := "set JobStatus = :s, EndTime = :et, EndTimeStamp = :etm"
+
+	input := &dynamodb.UpdateItemInput{
+		TableName: &db.tableName,
+		Key:       keyAttr,
+		ExpressionAttributeValues: map[string]dtype.AttributeValue{
+			":s": &dtype.AttributeValueMemberS{Value: result.status},
+			// ":e":   &dtype.AttributeValueMemberS{Value: *result.etag},
+			":et":  &dtype.AttributeValueMemberS{Value: time.Now().Format("2006/01/02 15:04:05")},
+			":etm": &dtype.AttributeValueMemberS{Value: fmt.Sprintf("%d", time.Now().Unix())},
+		},
+		ReturnValues:     "UPDATED_NEW",
+		UpdateExpression: &expr,
+	}
+
+	_, err := db.client.UpdateItem(db.ctx, input)
+
+	if err != nil {
+		log.Printf("Error updating a record of %s in DynamoDB - %s\n", *key, err.Error())
+		// return nil
+	}
+	// item = &Item{}
+
+	// err = attributevalue.UnmarshalMap(output.Attributes, item)
+	// if err != nil {
+	// 	log.Printf("failed to unmarshal Dynamodb Scan Items, %v", err)
+	// }
+	return err
+}
+
+// QueryItem is a function to ...
+func (db *DBService) QueryItem(key *string) (item *Item) {
+	log.Printf("Create a record of %s in DynamoDB\n", *key)
+
+	input := &dynamodb.GetItemInput{
+		TableName: &db.tableName,
+		Key: map[string]dtype.AttributeValue{
+			"ObjectKey": &dtype.AttributeValueMemberS{Value: *key},
+		},
+	}
+
+	output, err := db.client.GetItem(db.ctx, input)
+
+	if err != nil {
+		log.Printf("Error getting a record of %s in DynamoDB - %s\n", *key, err.Error())
+		// return nil
+	}
+
+	item = &Item{}
+
+	err = attributevalue.UnmarshalMap(output.Item, item)
+	if err != nil {
+		log.Printf("failed to unmarshal Dynamodb Scan Items, %v", err)
+	}
+	return
+
 }

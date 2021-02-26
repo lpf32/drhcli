@@ -234,6 +234,8 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 	log.Printf("Source Type is %s\n", cfg.SrcType)
 	sqs, _ := NewSqsService(ctx, cfg.JobQueueName)
 
+	db, _ := NewDBService(ctx, cfg.JobTableName)
+
 	sm, err := NewSsmService(ctx)
 	if err != nil {
 		log.Printf("Warning - Unable to load credentials, use default setting - %s\n", err.Error())
@@ -249,31 +251,13 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 		srcClient: srcClient,
 		desClient: desClient,
 		sqs:       sqs,
+		db:        db,
 		cfg:       cfg,
 	}
 }
 
 // Run a Worker job
 func (w *Worker) Run() {
-	w.startMigration()
-}
-
-// To extend message visibility before timeout
-func (w *Worker) heartBeat(rh *string) {
-	time.Sleep(time.Second * 870)
-
-	i := 0
-	// Extends 15 minutes everytime. Maximum timeout is 12 hours.
-	for i < 4*12 {
-		i++
-		w.sqs.ChangeVisibilityTimeout(rh, int32(870+15*60*i))
-		time.Sleep(time.Second * 15 * 60)
-	}
-
-}
-
-// StartMigration is a function to
-func (w *Worker) startMigration() {
 	// log.Println("Start migration...")
 
 	// A channel to block number of messages to be processed
@@ -298,33 +282,65 @@ func (w *Worker) startMigration() {
 		}
 
 		// TODO: Start a heart beat thread
-
 		log.Printf("Received message with key %s, start processing...\n", obj.Key)
-		// w.messageCh <- m
+
 		processCh <- struct{}{}
-		// go w.processJob(m, transferCh)
-		go func() {
-			log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
+		go w.startMigration(obj, transferCh, resultCh)
+		go w.processResult(obj, rh, processCh, resultCh)
+	}
+}
 
-			if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
-				w.migrateSmallFile(obj, transferCh, resultCh)
-			} else {
-				w.migrateBigFile(obj, transferCh, resultCh)
-			}
-		}()
+// To extend message visibility before timeout
+// func (w *Worker) heartBeat(rh *string) {
+// 	time.Sleep(time.Second * 870)
 
-		// go w.processResult(processCh, resultCh, rh)
-		go func() {
-			res := <-resultCh
+// 	i := 0
+// 	// Extends 15 minutes everytime. Maximum timeout is 12 hours.
+// 	for i < 4*12 {
+// 		i++
+// 		w.sqs.ChangeVisibilityTimeout(rh, int32(870+15*60*i))
+// 		time.Sleep(time.Second * 15 * 60)
+// 	}
 
-			if res.status == "DONE" {
-				w.sqs.DeleteMessage(rh)
-				// log.Printf("Delete Message%s", *rh)
-			}
+// }
 
-			log.Printf("Complete one job %s with status %s\n", obj.Key, res.status)
-			<-processCh
-		}()
+// startMigration is a function to
+func (w *Worker) processResult(obj *Object, rh *string, processCh <-chan struct{}, resultCh <-chan *TransferResult) {
+	// log.Println("Start migration...")
+
+	res := <-resultCh
+
+	if res.status == "DONE" {
+		w.sqs.DeleteMessage(rh)
+		// log.Printf("Delete Message%s", *rh)
+	}
+
+	w.db.UpdateItem(&obj.Key, res)
+
+	log.Printf("Complete one job %s with status %s\n", obj.Key, res.status)
+	<-processCh
+
+}
+
+// startMigration is a function to
+func (w *Worker) startMigration(obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
+	// log.Println("Start migration...")
+
+	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
+
+	// w.db.CreateItem(obj, nil)
+	item := w.db.QueryItem(&obj.Key)
+	log.Printf("Found Item %s", item.JobStatus)
+
+	if item.JobStatus == "STARTED" {
+		log.Println("Item already started, quit...")
+	} else {
+
+		if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
+			w.migrateSmallFile(obj, transferCh, resultCh)
+		} else {
+			w.migrateBigFile(obj, transferCh, resultCh)
+		}
 	}
 
 }
@@ -335,7 +351,9 @@ func (w *Worker) migrateSmallFile(obj *Object, transferCh chan struct{}, resultC
 	var err error
 	status := "DONE"
 
-	// Add a transfering record
+	w.db.CreateItem(obj, nil)
+
+	// Add a transferring record
 	transferCh <- struct{}{}
 
 	log.Printf("----->Downloading %d Bytes from %s/%s\n", obj.Size, w.cfg.SrcBucketName, obj.Key)
@@ -356,7 +374,7 @@ func (w *Worker) migrateSmallFile(obj *Object, transferCh chan struct{}, resultC
 		etag:   etag,
 		err:    err,
 	}
-	// Remove the transfering record  after transfer is completed
+	// Remove the transferring record  after transfer is completed
 	<-transferCh
 }
 
@@ -381,6 +399,8 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan struct{}, resultCh 
 	if err != nil {
 		log.Printf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
 	}
+
+	w.db.CreateItem(obj, uploadID)
 
 	totalParts := int(obj.Size/int64(chunkSize)) + 1
 

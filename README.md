@@ -1,3 +1,6 @@
+[![Go Report Card](https://goreportcard.com/badge/github.com/daixba/drhcli)](https://goreportcard.com/report/github.com/daixba/drhcli)
+
+
 # drhcli
 
 A distributed CLI to replicate data to Amazon S3 from other cloud storage services.
@@ -12,13 +15,13 @@ This tool leverages Amazon SQS to distribute the replication processes in many w
 Below features are planed in the first offical release
 
 - [x] Basical Project Structure
-- [ ] Store replication status in DynamoDB
+- [x] Store replication status in DynamoDB
 - [ ] Support replicate Metadata info (Head Object)
 - [ ] Support S3 Event Messages
 - [ ] Support Mulipart uploads when upload ID already exists
 - [ ] Support Other cloud storage service
-- [ ] Implement heart beat for large object transfer (Extend visibitity of the message)
-- [ ] Create docker image
+- [ ] ~~Implement heart beat for large object transfer (Not required)~~
+- [x] Create docker image
 - [ ] Create Unit Test cases
 
 
@@ -46,7 +49,7 @@ drhcli version vX.Y.Z
 
 ## Prerequisites
 
-You can run this tool in any places, even in local. However, you will need to have a SQS Queue and a DynamoDB table created before using the tool. DyanmoDB is used to store the replication status of each objects.
+You can run this tool in any places, even in local. However, you will need to have a SQS Queue and a DynamoDB table created before using the tool. DynamoDB is used to store the replication status of each objects, the partition key for DynamoDB must be `ObjectKey`
 
 If you need to provide AK/SK to accessing cloud service, you will need to set up a credential secure string in Amazon System Manager Parameter Store with a format as below
 
