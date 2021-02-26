@@ -62,7 +62,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.yaml)")
 
-	runCmd.Flags().StringVarP(&jobType, "type", "t", "Finder", "Job Type, choose either Finder or Worker (default type is Finder)")
+	runCmd.Flags().StringVarP(&jobType, "type", "t", "Finder", "Job Type, choose either Finder or Worker")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(runCmd)

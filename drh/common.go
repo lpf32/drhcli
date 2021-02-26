@@ -18,11 +18,6 @@ var (
 // 	GetEndpointURL()
 // }
 
-// Job is ...
-type Job interface {
-	Run()
-}
-
 // Client is an interface used to contact with Cloud Storage Services
 type Client interface {
 	// GET
@@ -37,8 +32,8 @@ type Client interface {
 	CompleteMultipartUpload(key string, uploadID *string, parts []*Part) (etag *string, err error)
 	UploadPart(key string, uploadID *string, body []byte, partNumber int) (etag *string, err error)
 	ListParts(key, uploadID string)
-	ListMultipartUploads(key string)
-	AbortMultipartUpload(key string, uploadID *string)
+	// ListMultipartUploads()
+	AbortMultipartUpload(key string, uploadID *string) (err error)
 }
 
 // Object represents an object to be replicated.
@@ -46,6 +41,11 @@ type Object struct {
 	Key  string
 	Size int64
 	// StorageClass string
+}
+
+// Metadata info of object
+type Metadata struct {
+	ContentType string
 }
 
 // Helper function to convert Object into Json string

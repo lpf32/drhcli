@@ -12,11 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
-// Metadata info of object
-type Metadata struct {
-	ContentType string
-}
-
 // Item holds info about the items to be stored in DynamoDB
 type Item struct {
 	ObjectKey, StorageClass, DesBucket, DesKey, Status, Version string
@@ -39,19 +34,18 @@ type SqsService struct {
 	ctx                 context.Context
 }
 
-// SsmService is a wrapper service used to interact with Amazon KMS
+// SsmService is a wrapper service used to interact with Amazon SSM
 type SsmService struct {
-	// tableName string
 	client *ssm.Client
 	ctx    context.Context
 }
 
 // Message is Default message (body) format in SQS
 // Assume Message can have different format comparing with drh.Object
-type Message struct {
-	Key, Version string
-	Size         int64
-}
+// type Message struct {
+// 	Key, Version string
+// 	Size         int64
+// }
 
 // // Helper function to convert Message into Json string
 // func (m *Message) toString() *string {
@@ -275,6 +269,7 @@ func (ss *SqsService) ChangeVisibilityTimeout(rh *string, seconds int32) (ok boo
 
 // IsQueueEmpty is a function to check if the Queue is empty or not
 func (ss *SqsService) IsQueueEmpty() bool {
+
 	return true
 }
 
