@@ -86,7 +86,8 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
-	// log.Printf("Cred is %v\n", srcCred)
+
+	// TODO: Need to append source prefix to destination
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
 
@@ -120,6 +121,7 @@ func (f *Finder) getTargetObjects(ctx context.Context, prefix *string) (objects 
 	objects = make(map[string]*int64)
 
 	for token != "End" {
+
 		jobs, err := f.desClient.ListObjects(ctx, &token, prefix, f.cfg.MaxKeys)
 		if err != nil {
 			log.Fatalf("Error listing objects in destination bucket - %s\n", err.Error())
@@ -200,6 +202,10 @@ func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan 
 // Run is main execution function for Finder.
 func (f *Finder) Run(ctx context.Context) {
 
+	if !f.sqs.IsQueueEmpty(ctx) {
+		log.Fatalf("Queue is not empty, object might be still transferring... Please run again once queue is empty")
+	}
+
 	// Maximum number of queued messages to be sent to SQS
 	var bufferSize int = 10000
 
@@ -244,6 +250,7 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
+	// TODO: Need to append source prefix to destination
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
 
@@ -281,8 +288,7 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 
-		// TODO: Start a heart beat thread
-		log.Printf("Received message with key %s, start processing...\n", obj.Key)
+		// log.Printf("Received message with key %s, start processing...\n", obj.Key)
 
 		processCh <- struct{}{}
 		go w.startMigration(ctx, obj, transferCh, resultCh)
@@ -335,16 +341,19 @@ func (w *Worker) startMigration(ctx context.Context, obj *Object, transferCh cha
 	if item.JobStatus == "STARTED" {
 		log.Println("Item already started, quit...")
 	} else {
+		// TODO: Head Object
 
 		if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
 			w.migrateSmallFile(ctx, obj, transferCh, resultCh)
 		} else {
-			w.migrateBigFile(ctx, obj, transferCh, resultCh)
+			w.migrateBigFile(ctx, &item.UploadID, obj, transferCh, resultCh)
 		}
 	}
 
 }
 
+// Internal func to deal with the transferring of small file.
+// First GetObject, then PutObject to transfer small file
 func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
 
 	var etag *string
@@ -358,6 +367,7 @@ func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh c
 
 	log.Printf("----->Downloading %d Bytes from %s/%s\n", obj.Size, w.cfg.SrcBucketName, obj.Key)
 
+	// TODO: Add metadata to GetObject result
 	body, err := w.srcClient.GetObject(ctx, obj.Key, obj.Size, 0, obj.Size, "null")
 	if err != nil {
 		status = "ERROR"
@@ -378,7 +388,10 @@ func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh c
 	<-transferCh
 }
 
-func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
+// Internal func to deal with the transferring of large file.
+// First need to create/get an uploadID, then use UploadID to upload each parts
+// Finally, need to combine all parts into a single file.
+func (w *Worker) migrateBigFile(ctx context.Context, uploadID *string, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
 	// log.Println("Download and Upload big file")
 
 	chunkSize := w.cfg.ChunkSize * MB
@@ -388,23 +401,31 @@ func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, transferCh cha
 	var etag *string
 	var err error
 	status := "DONE"
+	totalParts := 0
 
-	// TODO: Check if upload ID already existed?
 	// If Yes, need to use list parts to get all existing parts.
-	// log.Println("Upload ID can not be found")
-
 	// Else Create a new upload ID
-	uploadID, err := w.desClient.CreateMultipartUpload(ctx, obj.Key)
+	if uploadID == nil {
 
-	if err != nil {
-		log.Printf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
+		// TODO: Get metadata first by HeadObject
+		// Add metadata to CreateMultipartUpload func.
+		uploadID, err = w.desClient.CreateMultipartUpload(ctx, obj.Key)
+
+		if err != nil {
+			log.Printf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
+		}
+
+		w.db.CreateItem(ctx, obj, uploadID)
+
+		totalParts := int(obj.Size/int64(chunkSize)) + 1
+
+		log.Printf("Total parts are %d - for %s\n", totalParts, obj.Key)
+
+	} else {
+		log.Printf("UploadID exists\n, Listing parts")
+		// TODO: Implement logic when upload ID already existed
+
 	}
-
-	w.db.CreateItem(ctx, obj, uploadID)
-
-	totalParts := int(obj.Size/int64(chunkSize)) + 1
-
-	log.Printf("Total parts are %d - for %s\n", totalParts, obj.Key)
 
 	wg.Add(totalParts)
 
