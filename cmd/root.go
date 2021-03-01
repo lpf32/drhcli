@@ -62,7 +62,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.yaml)")
 
-	runCmd.Flags().StringVarP(&jobType, "type", "t", "Finder", "Job Type, choose either Finder or Worker (default type is Finder)")
+	runCmd.Flags().StringVarP(&jobType, "type", "t", "Finder", "Job Type, choose either Finder or Worker")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(runCmd)
@@ -96,8 +96,8 @@ func initConfig() {
 	viper.BindEnv("destBucketPrefix", "DEST_BUCKET_PREFIX")
 	viper.BindEnv("destRegion", "DEST_REGION")
 	viper.BindEnv("destCredential", "DEST_CREDENTIALS")
+	viper.BindEnv("destInCurrentAccount", "DEST_IN_CURRENT_ACCOUNT")
 	viper.BindEnv("destStorageClass", "DEST_STORAGE_CLASS")
-	viper.BindEnv("destInCurrentAccount", "SRC_IN_CURRENT_ACCOUNT")
 
 	viper.BindEnv("jobTableName", "JOB_TABLE_NAME")
 	viper.BindEnv("jobQueueName", "JOB_QUEUE_NAME")
@@ -143,7 +143,7 @@ func initConfig() {
 		SrcBucketPrefix:      viper.GetString("srcBucketPrefix"),
 		SrcRegion:            viper.GetString("srcRegion"),
 		SrcCredential:        viper.GetString("srcCredential"),
-		SrcInCurrentAccount:  viper.GetBool("SrcInCurrentAccount"),
+		SrcInCurrentAccount:  viper.GetBool("srcInCurrentAccount"),
 		DestBucketName:       viper.GetString("destBucketName"),
 		DestBucketPrefix:     viper.GetString("destBucketPrefix"),
 		DestRegion:           viper.GetString("destRegion"),
@@ -199,6 +199,6 @@ Supported types:
 			log.Fatalf("Unknown Job Type - %s. Type must be either Finder or Worker\n, please start again", jobType)
 
 		}
-		job.Run()
+		job.Run(ctx)
 	},
 }
