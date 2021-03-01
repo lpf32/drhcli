@@ -87,7 +87,7 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
-	// TODO: Need to append source prefix to destination
+	// TODO: Add logic when destination prefix is not empty
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
 
@@ -202,7 +202,7 @@ func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan 
 func (f *Finder) Run(ctx context.Context) {
 
 	if !f.sqs.IsQueueEmpty(ctx) {
-		log.Fatalf("Queue is not empty, object might be still transferring... Please run again once queue is empty")
+		log.Fatalf("Queue might not be empty or Unknown error... Please try again later")
 	}
 
 	// Maximum number of queued messages to be sent to SQS
@@ -249,7 +249,7 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
-	// TODO: Need to append source prefix to destination
+	// TODO: Add logic when destination prefix is not empty
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
 
@@ -295,20 +295,6 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// To extend message visibility before timeout
-// func (w *Worker) heartBeat(rh *string) {
-// 	time.Sleep(time.Second * 870)
-
-// 	i := 0
-// 	// Extends 15 minutes everytime. Maximum timeout is 12 hours.
-// 	for i < 4*12 {
-// 		i++
-// 		w.sqs.ChangeVisibilityTimeout(rh, int32(870+15*60*i))
-// 		time.Sleep(time.Second * 15 * 60)
-// 	}
-
-// }
-
 // startMigration is a function to
 func (w *Worker) processResult(ctx context.Context, obj *Object, rh *string, processCh <-chan struct{}, resultCh <-chan *TransferResult) {
 	// log.Println("Start migration...")
@@ -340,7 +326,6 @@ func (w *Worker) startMigration(ctx context.Context, obj *Object, transferCh cha
 	if item.JobStatus == "STARTED" {
 		log.Println("Item already started, quit...")
 	} else {
-		// TODO: Head Object
 
 		if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
 			w.migrateSmallFile(ctx, obj, transferCh, resultCh)
@@ -387,20 +372,35 @@ func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh c
 	<-transferCh
 }
 
+func (w *Worker) getTotalParts(size int64) (totalParts, chunkSize int) {
+
+	maxParts := 10000
+
+	// chunkSize = w.cfg.ChunkSize
+	chunkSize = w.cfg.ChunkSize * MB
+
+	// Auto extend chunk size if total parts are greater than MaxParts (10000)
+	totalParts = int(size/int64(chunkSize)) + 1
+
+	if totalParts > maxParts {
+		totalParts = maxParts
+		chunkSize = int(size/int64(maxParts)) + 1024
+	}
+
+	return totalParts, chunkSize
+}
+
 // Internal func to deal with the transferring of large file.
 // First need to create/get an uploadID, then use UploadID to upload each parts
 // Finally, need to combine all parts into a single file.
 func (w *Worker) migrateBigFile(ctx context.Context, uploadID *string, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
 	// log.Println("Download and Upload big file")
 
-	chunkSize := w.cfg.ChunkSize * MB
-
 	var wg sync.WaitGroup
 
 	var etag *string
 	var err error
 	status := "DONE"
-	totalParts := 0
 
 	// If Yes, need to use list parts to get all existing parts.
 	// Else Create a new upload ID
@@ -416,15 +416,15 @@ func (w *Worker) migrateBigFile(ctx context.Context, uploadID *string, obj *Obje
 
 		w.db.CreateItem(ctx, obj, uploadID)
 
-		totalParts := int(obj.Size/int64(chunkSize)) + 1
-
-		log.Printf("Total parts are %d - for %s\n", totalParts, obj.Key)
-
 	} else {
 		log.Printf("UploadID exists\n, Listing parts")
 		// TODO: Implement logic when upload ID already existed
+		// list Parts
 
 	}
+
+	totalParts, chunkSize := w.getTotalParts(obj.Size)
+	log.Printf("Total parts are %d - for %s\n", totalParts, obj.Key)
 
 	wg.Add(totalParts)
 
@@ -435,6 +435,9 @@ func (w *Worker) migrateBigFile(ctx context.Context, uploadID *string, obj *Obje
 
 		partNumber := i + 1
 
+		// check if part in list parts result.
+
+		// If not, upload the part
 		transferCh <- struct{}{}
 
 		go func(i int) {
@@ -472,7 +475,6 @@ func (w *Worker) migrateBigFile(ctx context.Context, uploadID *string, obj *Obje
 
 	wg.Wait()
 
-	// TODO: Check this.
 	parts := make([]*Part, totalParts)
 	for i := 0; i < totalParts; i++ {
 		// The list of parts must be in ascending order

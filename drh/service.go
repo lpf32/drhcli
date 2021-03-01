@@ -267,8 +267,8 @@ func (ss *SqsService) DeleteMessage(ctx context.Context, rh *string) (ok bool) {
 // }
 
 // IsQueueEmpty is a function to check if the Queue is empty or not
-func (ss *SqsService) IsQueueEmpty(ctx context.Context) bool {
-	// TODO: Implement this.
+func (ss *SqsService) IsQueueEmpty(ctx context.Context) (isEmpty bool) {
+	isEmpty = false
 	input := &sqs.GetQueueAttributesInput{
 		QueueUrl: &ss.queueURL,
 		AttributeNames: []types.QueueAttributeName{
@@ -279,7 +279,8 @@ func (ss *SqsService) IsQueueEmpty(ctx context.Context) bool {
 	output, err := ss.client.GetQueueAttributes(ctx, input)
 
 	if err != nil {
-		log.Fatalf("Unable to read message from Queue %s - %s", ss.queueName, err.Error())
+		log.Printf("Faided to get queue attributes from Queue %s, please try again later - %s", ss.queueName, err.Error())
+		return
 	}
 
 	visible := output.Attributes["ApproximateNumberOfMessages"]
@@ -288,10 +289,9 @@ func (ss *SqsService) IsQueueEmpty(ctx context.Context) bool {
 	log.Printf("Queue %s has %s not visible message(s) and %s visable message(s)\n", ss.queueName, notVisible, visible)
 
 	if visible == "0" && notVisible == "0" {
-		return true
+		isEmpty = true
 	}
-
-	return false
+	return
 }
 
 // GetParameterValue is a function to check if the Queue is empty or not

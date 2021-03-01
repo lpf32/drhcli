@@ -20,7 +20,7 @@ Below features are planed in the first offical release
 - [ ] Support S3 Event Messages
 - [ ] Support Mulipart uploads when upload ID already exists
 - [ ] Support Other cloud storage service
-- [ ] ~~Implement heart beat for large object transfer (Not required)~~
+- [ ] Add logic when destination prefix is not empty
 - [x] Create docker image
 - [ ] Create Unit Test cases
 
