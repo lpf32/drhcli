@@ -1,7 +1,6 @@
 package drh
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 )
@@ -18,24 +17,6 @@ var (
 // type Source interface {
 // 	GetEndpointURL()
 // }
-
-// Client is an interface used to contact with Cloud Storage Services
-type Client interface {
-	// GET
-	ListObjects(ctx context.Context, continuationToken, prefix *string, maxKeys int32) ([]*Object, error)
-	HeadObject(ctx context.Context, key string)
-	GetObject(ctx context.Context, key string, size, start, chunkSize int64, version string) ([]byte, error)
-	ListCommonPrefixes(ctx context.Context, depth int, maxKeys int32) (prefixes []*string)
-
-	// PUT
-	PutObject(ctx context.Context, key string, body []byte, storageClass string) (etag *string, err error)
-	CreateMultipartUpload(ctx context.Context, key string) (uploadID *string, err error)
-	CompleteMultipartUpload(ctx context.Context, key string, uploadID *string, parts []*Part) (etag *string, err error)
-	UploadPart(ctx context.Context, key string, uploadID *string, body []byte, partNumber int) (etag *string, err error)
-	ListParts(ctx context.Context, key, uploadID string)
-	// ListMultipartUploads(ctx context.Context)
-	AbortMultipartUpload(ctx context.Context, key string, uploadID *string) (err error)
-}
 
 // Object represents an object to be replicated.
 type Object struct {

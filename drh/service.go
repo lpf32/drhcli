@@ -78,11 +78,12 @@ type SsmService struct {
 // 	return
 // }
 
-// NewSsmService is a ...
+// NewSsmService is a helper func to create a SsmService instance
 func NewSsmService(ctx context.Context) (*SsmService, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Printf("unable to load SDK config to create SSM client - %s\n", err.Error())
+		// Don't need to quit the process
+		log.Printf("Failed to load default SDK config to create SSM client - %s\n", err.Error())
 		return nil, err
 	}
 
@@ -94,12 +95,11 @@ func NewSsmService(ctx context.Context) (*SsmService, error) {
 	}, nil
 }
 
-// NewDBService is a ...
+// NewDBService is a helper func to create a DBService instance
 func NewDBService(ctx context.Context, tableName string) (*DBService, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatalln("unable to load SDK config, " + err.Error())
-		return nil, err
+		log.Fatalf("Failed to load default SDK config to create DynamoDB client - %s\n", err.Error())
 	}
 
 	// Create an Amazon DynamoDB client.
@@ -111,13 +111,13 @@ func NewDBService(ctx context.Context, tableName string) (*DBService, error) {
 	}, nil
 }
 
-// NewSqsService is helper function used to create a SqsService instance
+// NewSqsService is a helper func to create a SqsService instance
 func NewSqsService(ctx context.Context, queueName string) (*SqsService, error) {
 
 	// Only to use default config here
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatalf("Error creating a SQS Client, unable to load default configuration - %s\n", err.Error())
+		log.Fatalf("Failed to load default SDK config to create SQS client - %s\n", err.Error())
 	}
 
 	client := sqs.NewFromConfig(cfg)
@@ -218,6 +218,8 @@ func (ss *SqsService) ReceiveMessages(ctx context.Context) (obj *Object, receipt
 	// log.Println("Message Handle: " + *output.Messages[0].ReceiptHandle)
 	// log.Println("Message Body: " + *output.Messages[0].Body)
 
+	// TODO: Support S3 Event Message
+	// Need to check the format of the message body
 	obj = newObject(*output.Messages[0].Body)
 	receiptHandle = output.Messages[0].ReceiptHandle
 
@@ -265,9 +267,31 @@ func (ss *SqsService) DeleteMessage(ctx context.Context, rh *string) (ok bool) {
 // }
 
 // IsQueueEmpty is a function to check if the Queue is empty or not
-func (ss *SqsService) IsQueueEmpty() bool {
+func (ss *SqsService) IsQueueEmpty(ctx context.Context) bool {
+	// TODO: Implement this.
+	input := &sqs.GetQueueAttributesInput{
+		QueueUrl: &ss.queueURL,
+		AttributeNames: []types.QueueAttributeName{
+			"ApproximateNumberOfMessages",
+			"ApproximateNumberOfMessagesNotVisible",
+		},
+	}
+	output, err := ss.client.GetQueueAttributes(ctx, input)
 
-	return true
+	if err != nil {
+		log.Fatalf("Unable to read message from Queue %s - %s", ss.queueName, err.Error())
+	}
+
+	visible := output.Attributes["ApproximateNumberOfMessages"]
+	notVisible := output.Attributes["ApproximateNumberOfMessagesNotVisible"]
+
+	log.Printf("Queue %s has %s not visible message(s) and %s visable message(s)\n", ss.queueName, notVisible, visible)
+
+	if visible == "0" && notVisible == "0" {
+		return true
+	}
+
+	return false
 }
 
 // GetParameterValue is a function to check if the Queue is empty or not
@@ -335,14 +359,20 @@ func (db *DBService) UpdateItem(ctx context.Context, key *string, result *Transf
 	keyAttr := make(map[string]dtype.AttributeValue)
 	keyAttr["ObjectKey"] = &dtype.AttributeValueMemberS{Value: *key}
 
-	expr := "set JobStatus = :s, EndTime = :et, EndTimeStamp = :etm"
+	etag := ""
+
+	if result.etag != nil {
+		etag = *result.etag
+	}
+
+	expr := "set JobStatus = :s, Etag = :tg, EndTime = :et, EndTimeStamp = :etm"
 
 	input := &dynamodb.UpdateItemInput{
 		TableName: &db.tableName,
 		Key:       keyAttr,
 		ExpressionAttributeValues: map[string]dtype.AttributeValue{
-			":s": &dtype.AttributeValueMemberS{Value: result.status},
-			// ":e":   &dtype.AttributeValueMemberS{Value: *result.etag},
+			":s":   &dtype.AttributeValueMemberS{Value: result.status},
+			":tg":  &dtype.AttributeValueMemberS{Value: etag},
 			":et":  &dtype.AttributeValueMemberS{Value: time.Now().Format("2006/01/02 15:04:05")},
 			":etm": &dtype.AttributeValueMemberS{Value: fmt.Sprintf("%d", time.Now().Unix())},
 		},

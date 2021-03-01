@@ -10,15 +10,31 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
+
+// Client is an interface used to contact with Cloud Storage Services
+type Client interface {
+	// GET
+	ListObjects(ctx context.Context, continuationToken, prefix *string, maxKeys int32) ([]*Object, error)
+	HeadObject(ctx context.Context, key string)
+	GetObject(ctx context.Context, key string, size, start, chunkSize int64, version string) ([]byte, error)
+	ListCommonPrefixes(ctx context.Context, depth int, maxKeys int32) (prefixes []*string)
+
+	// PUT
+	PutObject(ctx context.Context, key string, body []byte, storageClass string) (etag *string, err error)
+	CreateMultipartUpload(ctx context.Context, key string) (uploadID *string, err error)
+	CompleteMultipartUpload(ctx context.Context, key string, uploadID *string, parts []*Part) (etag *string, err error)
+	UploadPart(ctx context.Context, key string, uploadID *string, body []byte, partNumber int) (etag *string, err error)
+	ListParts(ctx context.Context, key, uploadID string)
+	// ListMultipartUploads(ctx context.Context)
+	AbortMultipartUpload(ctx context.Context, key string, uploadID *string) (err error)
+}
 
 // S3Client is an implementation of Client interface for Amazon S3
 type S3Client struct {
@@ -79,15 +95,17 @@ func getEndpointURL(region, sourceType string) (url string) {
 // NewS3Client create a S3Client instance
 func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string, cred *S3Credentials) *S3Client {
 
-	config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
-	// config, err := config.LoadDefaultConfig(ctx)
+	// config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	config, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatalf("Error creating a S3 Client, unable to load default configuration - %s\n", err.Error())
+		log.Fatalf("Failed to load default SDK config to create S3 client - %s\n", err.Error())
 	}
 
+	// TODO: Verify if this works for other clouds
 	client := s3.NewFromConfig(config, func(o *s3.Options) {
-		retryer := retry.AddWithMaxBackoffDelay(retry.NewStandard(), time.Second*5)
-		o.Retryer = retryer
+		// retryer := retry.AddWithMaxBackoffDelay(retry.NewStandard(), time.Second*5)
+		// o.Retryer = retryer
+		o.Region = region
 		url := getEndpointURL(region, sourceType)
 		if url != "" {
 			o.EndpointResolver = s3.EndpointResolverFromURL(url)
@@ -132,9 +150,6 @@ func (c *S3Client) GetObject(ctx context.Context, key string, size, start, chunk
 	defer output.Body.Close()
 
 	// Read response body
-	// buf := new(bytes.Buffer)
-	// buf.ReadFrom(output.Body)
-	// s := buf.Bytes()
 	s, err := io.ReadAll(output.Body)
 
 	if err != nil {
@@ -145,6 +160,7 @@ func (c *S3Client) GetObject(ctx context.Context, key string, size, start, chunk
 
 }
 
+// Internal func to call API to list objects.
 func (c *S3Client) listObjectFn(ctx context.Context, continuationToken, prefix, delimiter *string, maxKeys int32) (*s3.ListObjectsV2Output, error) {
 
 	input := &s3.ListObjectsV2Input{
@@ -160,6 +176,8 @@ func (c *S3Client) listObjectFn(ctx context.Context, continuationToken, prefix, 
 
 	// start := time.Now()
 
+	// TODO: Verify if this op works for other cloud service
+	// For example, GCP does not support V2
 	output, err := c.client.ListObjectsV2(ctx, input)
 	if err != nil {
 		log.Printf("Unable to list objects in /%s - %s\n", *prefix, err.Error())
