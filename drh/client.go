@@ -261,7 +261,6 @@ func (c *S3Client) ListObjects(ctx context.Context, continuationToken, prefix *s
 		return nil, err
 	}
 
-	// TODO double check this.
 	len := len(output.Contents)
 	result := make([]*Object, len, len)
 
