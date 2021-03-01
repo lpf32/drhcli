@@ -24,7 +24,6 @@ import (
 type S3Client struct {
 	bucket, prefix, region, sourceType string
 	client                             *s3.Client
-	ctx                                context.Context
 }
 
 // S3Credentials is
@@ -107,7 +106,6 @@ func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string,
 		bucket:     bucket,
 		prefix:     prefix,
 		client:     client,
-		ctx:        ctx,
 		region:     region,
 		sourceType: sourceType,
 	}
@@ -115,7 +113,7 @@ func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string,
 }
 
 // GetObject is a function to get (download) object from Amazon S3
-func (c *S3Client) GetObject(key string, size, start, chunkSize int64, version string) ([]byte, error) {
+func (c *S3Client) GetObject(ctx context.Context, key string, size, start, chunkSize int64, version string) ([]byte, error) {
 	// log.Printf("S3> Downloading %s with %d bytes start from %d\n", key, size, start)
 
 	bodyRange := fmt.Sprintf("bytes=%d-%d", start, start+chunkSize-1)
@@ -125,7 +123,7 @@ func (c *S3Client) GetObject(key string, size, start, chunkSize int64, version s
 		Range:  &bodyRange,
 	}
 
-	output, err := c.client.GetObject(c.ctx, input)
+	output, err := c.client.GetObject(ctx, input)
 	if err != nil {
 		log.Printf("S3> Unable to download %s with %d bytes start from %d - %s\n", key, size, start, err.Error())
 		return nil, err
@@ -147,7 +145,7 @@ func (c *S3Client) GetObject(key string, size, start, chunkSize int64, version s
 
 }
 
-func (c *S3Client) listObjectFn(continuationToken, prefix, delimiter *string, maxKeys int32) (*s3.ListObjectsV2Output, error) {
+func (c *S3Client) listObjectFn(ctx context.Context, continuationToken, prefix, delimiter *string, maxKeys int32) (*s3.ListObjectsV2Output, error) {
 
 	input := &s3.ListObjectsV2Input{
 		Bucket:    &c.bucket,
@@ -162,7 +160,7 @@ func (c *S3Client) listObjectFn(continuationToken, prefix, delimiter *string, ma
 
 	// start := time.Now()
 
-	output, err := c.client.ListObjectsV2(c.ctx, input)
+	output, err := c.client.ListObjectsV2(ctx, input)
 	if err != nil {
 		log.Printf("Unable to list objects in /%s - %s\n", *prefix, err.Error())
 		return nil, err
@@ -181,7 +179,7 @@ func (c *S3Client) listObjectFn(continuationToken, prefix, delimiter *string, ma
 }
 
 // Recursively list sub directories
-func (c *S3Client) listPrefixFn(depth int, prefix *string, maxKeys int32, levelCh chan<- *string, wg *sync.WaitGroup) {
+func (c *S3Client) listPrefixFn(ctx context.Context, depth int, prefix *string, maxKeys int32, levelCh chan<- *string, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
@@ -193,7 +191,7 @@ func (c *S3Client) listPrefixFn(depth int, prefix *string, maxKeys int32, levelC
 	delimiter := "/"
 
 	for continuationToken != "End" {
-		output, _ := c.listObjectFn(&continuationToken, prefix, &delimiter, maxKeys)
+		output, _ := c.listObjectFn(ctx, &continuationToken, prefix, &delimiter, maxKeys)
 
 		log.Printf("Getting %d prefixes in /%s\n", len(output.CommonPrefixes), *prefix)
 
@@ -202,7 +200,7 @@ func (c *S3Client) listPrefixFn(depth int, prefix *string, maxKeys int32, levelC
 		} else {
 			for _, cp := range output.CommonPrefixes {
 				wg.Add(1)
-				go c.listPrefixFn(depth-1, cp.Prefix, maxKeys, levelCh, wg)
+				go c.listPrefixFn(ctx, depth-1, cp.Prefix, maxKeys, levelCh, wg)
 			}
 		}
 
@@ -210,7 +208,7 @@ func (c *S3Client) listPrefixFn(depth int, prefix *string, maxKeys int32, levelC
 }
 
 // ListCommonPrefixes is a function to list common prefixes.
-func (c *S3Client) ListCommonPrefixes(depth int, maxKeys int32) (prefixes []*string) {
+func (c *S3Client) ListCommonPrefixes(ctx context.Context, depth int, maxKeys int32) (prefixes []*string) {
 	log.Printf("List Prefixes /%s with depths %d\n", c.prefix, depth)
 	var wg sync.WaitGroup
 
@@ -221,7 +219,7 @@ func (c *S3Client) ListCommonPrefixes(depth int, maxKeys int32) (prefixes []*str
 
 	levelCh := make(chan *string, 10)
 	wg.Add(1)
-	go c.listPrefixFn(depth, &c.prefix, maxKeys, levelCh, &wg)
+	go c.listPrefixFn(ctx, depth, &c.prefix, maxKeys, levelCh, &wg)
 	wg.Wait()
 	close(levelCh)
 
@@ -234,12 +232,12 @@ func (c *S3Client) ListCommonPrefixes(depth int, maxKeys int32) (prefixes []*str
 }
 
 // ListObjects is a function to list objects from Amazon S3
-func (c *S3Client) ListObjects(continuationToken, prefix *string, maxKeys int32) ([]*Object, error) {
+func (c *S3Client) ListObjects(ctx context.Context, continuationToken, prefix *string, maxKeys int32) ([]*Object, error) {
 
 	// log.Printf("S3> list objects in bucket %s/%s from S3\n", c.bucket, *prefix)
 	delimiter := ""
 
-	output, err := c.listObjectFn(continuationToken, prefix, &delimiter, maxKeys)
+	output, err := c.listObjectFn(ctx, continuationToken, prefix, &delimiter, maxKeys)
 	if err != nil {
 		log.Printf("S3> Unable to list object in /%s - %s\n", *prefix, err.Error())
 		return nil, err
@@ -262,12 +260,12 @@ func (c *S3Client) ListObjects(continuationToken, prefix *string, maxKeys int32)
 }
 
 // HeadObject is a function to get extra metadata from Amazon S3
-func (c *S3Client) HeadObject(key string) {
+func (c *S3Client) HeadObject(ctx context.Context, key string) {
 	log.Printf("S3> Get extra metadata info for %s\n", key)
 
 	input := &s3.HeadObjectInput{}
 
-	output, err := c.client.HeadObject(c.ctx, input)
+	output, err := c.client.HeadObject(ctx, input)
 	if err != nil {
 		log.Printf("Unable to head object for %s - %s\n", key, err.Error())
 		// return err
@@ -277,7 +275,7 @@ func (c *S3Client) HeadObject(key string) {
 }
 
 // PutObject is a function to put (upload) an object to Amazon S3
-func (c *S3Client) PutObject(key string, body []byte, storageClass string) (etag *string, err error) {
+func (c *S3Client) PutObject(ctx context.Context, key string, body []byte, storageClass string) (etag *string, err error) {
 	// log.Printf("S3> Uploading object %s to bucket %s\n", key, c.bucket)
 
 	md5Bytes := md5.Sum(body)
@@ -296,7 +294,7 @@ func (c *S3Client) PutObject(key string, body []byte, storageClass string) (etag
 		// StorageClass: types.StorageClass(storageClass),
 	}
 
-	output, err := c.client.PutObject(c.ctx, input)
+	output, err := c.client.PutObject(ctx, input)
 	if err != nil {
 		log.Printf("S3> Got an error uploading file - %s\n", err.Error())
 		// return nil, err
@@ -311,7 +309,7 @@ func (c *S3Client) PutObject(key string, body []byte, storageClass string) (etag
 }
 
 // UploadPart is
-func (c *S3Client) UploadPart(key string, uploadID *string, body []byte, partNumber int) (etag *string, err error) {
+func (c *S3Client) UploadPart(ctx context.Context, key string, uploadID *string, body []byte, partNumber int) (etag *string, err error) {
 	// log.Printf("S3> Uploading part for %s with part number %d", key, partNumber)
 
 	md5Bytes := md5.Sum(body)
@@ -331,7 +329,7 @@ func (c *S3Client) UploadPart(key string, uploadID *string, body []byte, partNum
 		ContentMD5: &contentMD5,
 	}
 
-	output, err := c.client.UploadPart(c.ctx, input)
+	output, err := c.client.UploadPart(ctx, input)
 	if err != nil {
 		log.Printf("S3> Unable to upload part for %s - %s\n", key, err.Error())
 		// return nil, err
@@ -345,7 +343,7 @@ func (c *S3Client) UploadPart(key string, uploadID *string, body []byte, partNum
 }
 
 // CompleteMultipartUpload is
-func (c *S3Client) CompleteMultipartUpload(key string, uploadID *string, parts []*Part) (etag *string, err error) {
+func (c *S3Client) CompleteMultipartUpload(ctx context.Context, key string, uploadID *string, parts []*Part) (etag *string, err error) {
 	// log.Printf("S3> Complete Multipart Uploads for %s\n", key)
 
 	// Need to convert drh.Part to types.CompletedPart
@@ -369,7 +367,7 @@ func (c *S3Client) CompleteMultipartUpload(key string, uploadID *string, parts [
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: completedPart},
 	}
 
-	output, err := c.client.CompleteMultipartUpload(c.ctx, input)
+	output, err := c.client.CompleteMultipartUpload(ctx, input)
 	if err != nil {
 		log.Printf("S3> Unable to complete multipart upload for %s - %s\n", key, err.Error())
 	} else {
@@ -384,7 +382,7 @@ func (c *S3Client) CompleteMultipartUpload(key string, uploadID *string, parts [
 }
 
 // CreateMultipartUpload is
-func (c *S3Client) CreateMultipartUpload(key string) (uploadID *string, err error) {
+func (c *S3Client) CreateMultipartUpload(ctx context.Context, key string) (uploadID *string, err error) {
 	log.Printf("S3> Create Multipart Upload for %s\n", key)
 
 	input := &s3.CreateMultipartUploadInput{
@@ -394,7 +392,7 @@ func (c *S3Client) CreateMultipartUpload(key string) (uploadID *string, err erro
 		// metadata: "s",
 	}
 
-	output, err := c.client.CreateMultipartUpload(c.ctx, input)
+	output, err := c.client.CreateMultipartUpload(ctx, input)
 	if err != nil {
 		log.Printf("S3> Unable to create multipart upload for %s - %s\n", key, err.Error())
 	} else {
@@ -405,7 +403,7 @@ func (c *S3Client) CreateMultipartUpload(key string) (uploadID *string, err erro
 }
 
 // ListParts is
-func (c *S3Client) ListParts(key, uploadID string) {
+func (c *S3Client) ListParts(ctx context.Context, key, uploadID string) {
 	log.Printf("S3> List Parts for %s with upload ID %s\n", key, uploadID)
 
 	input := &s3.ListPartsInput{
@@ -414,7 +412,7 @@ func (c *S3Client) ListParts(key, uploadID string) {
 		UploadId: &uploadID,
 	}
 
-	output, err := c.client.ListParts(c.ctx, input)
+	output, err := c.client.ListParts(ctx, input)
 	if err != nil {
 		log.Printf("Unable to list parts for %s - %s\n", key, err.Error())
 		// return nil, err
@@ -427,7 +425,7 @@ func (c *S3Client) ListParts(key, uploadID string) {
 }
 
 // ListMultipartUploads lists all unfinished upload IDs
-func (c *S3Client) ListMultipartUploads() {
+func (c *S3Client) ListMultipartUploads(ctx context.Context) {
 	log.Println("S3> List Multipart Uploads")
 
 	input := &s3.ListMultipartUploadsInput{
@@ -435,7 +433,7 @@ func (c *S3Client) ListMultipartUploads() {
 		Prefix: &c.prefix,
 	}
 
-	output, err := c.client.ListMultipartUploads(c.ctx, input)
+	output, err := c.client.ListMultipartUploads(ctx, input)
 	if err != nil {
 		log.Printf("S3> Unable to list multipart uploads - %s\n", err.Error())
 		// return nil, err
@@ -448,7 +446,7 @@ func (c *S3Client) ListMultipartUploads() {
 }
 
 // AbortMultipartUpload is
-func (c *S3Client) AbortMultipartUpload(key string, uploadID *string) (err error) {
+func (c *S3Client) AbortMultipartUpload(ctx context.Context, key string, uploadID *string) (err error) {
 	// log.Printf("S3> Abort multipart upload for %s with upload id %s\n", key, *uploadID)
 
 	input := &s3.AbortMultipartUploadInput{
@@ -456,7 +454,7 @@ func (c *S3Client) AbortMultipartUpload(key string, uploadID *string) (err error
 		Key:      &key,
 		UploadId: uploadID,
 	}
-	_, err = c.client.AbortMultipartUpload(c.ctx, input)
+	_, err = c.client.AbortMultipartUpload(ctx, input)
 	if err != nil {
 		log.Printf("S3> Unable to abort multipart upload for %s - %s\n", key, err.Error())
 		return err

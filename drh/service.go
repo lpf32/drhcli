@@ -28,20 +28,17 @@ type Item struct {
 type DBService struct {
 	tableName string
 	client    *dynamodb.Client
-	ctx       context.Context
 }
 
 // SqsService is a wrapper service used to interact with Amazon SQS
 type SqsService struct {
 	queueName, queueURL string
 	client              *sqs.Client
-	ctx                 context.Context
 }
 
 // SsmService is a wrapper service used to interact with Amazon SSM
 type SsmService struct {
 	client *ssm.Client
-	ctx    context.Context
 }
 
 // Message is Default message (body) format in SQS
@@ -83,7 +80,7 @@ type SsmService struct {
 
 // NewSsmService is a ...
 func NewSsmService(ctx context.Context) (*SsmService, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		log.Printf("unable to load SDK config to create SSM client - %s\n", err.Error())
 		return nil, err
@@ -94,13 +91,12 @@ func NewSsmService(ctx context.Context) (*SsmService, error) {
 
 	return &SsmService{
 		client: client,
-		ctx:    ctx,
 	}, nil
 }
 
 // NewDBService is a ...
 func NewDBService(ctx context.Context, tableName string) (*DBService, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		log.Fatalln("unable to load SDK config, " + err.Error())
 		return nil, err
@@ -112,7 +108,6 @@ func NewDBService(ctx context.Context, tableName string) (*DBService, error) {
 	return &DBService{
 		tableName: tableName,
 		client:    client,
-		ctx:       ctx,
 	}, nil
 }
 
@@ -143,14 +138,13 @@ func NewSqsService(ctx context.Context, queueName string) (*SqsService, error) {
 		queueName: queueName,
 		queueURL:  queueURL,
 		client:    client,
-		ctx:       ctx,
 	}
 
 	return &SqsService, nil
 }
 
 // SendMessage function sends 1 message at a time to the Queue
-func (ss *SqsService) SendMessage(o *Object) error {
+func (ss *SqsService) SendMessage(ctx context.Context, o *Object) error {
 	// log.Printf("Send Message to Queue")
 
 	input := &sqs.SendMessageInput{
@@ -158,7 +152,7 @@ func (ss *SqsService) SendMessage(o *Object) error {
 		MessageBody: o.toString(),
 	}
 
-	resp, err := ss.client.SendMessage(ss.ctx, input)
+	resp, err := ss.client.SendMessage(ctx, input)
 	if err != nil {
 		log.Printf("Error: %s", err)
 		return err
@@ -170,7 +164,7 @@ func (ss *SqsService) SendMessage(o *Object) error {
 
 // SendMessageInBatch function sends messages to the Queue in batch.
 // Each batch can only contains up to 10 messages
-func (ss *SqsService) SendMessageInBatch(batch []*Object) {
+func (ss *SqsService) SendMessageInBatch(ctx context.Context, batch []*Object) {
 	// log.Printf("Sending %d messages to Queue in batch ", len(batch))
 
 	// Assume batch size <= 10
@@ -192,7 +186,7 @@ func (ss *SqsService) SendMessageInBatch(batch []*Object) {
 		Entries:  entries,
 	}
 
-	_, err := ss.client.SendMessageBatch(ss.ctx, input)
+	_, err := ss.client.SendMessageBatch(ctx, input)
 
 	if err != nil {
 		log.Fatalf("Unable to send the messages in batch to SQS Queue - %s\n", err.Error())
@@ -202,12 +196,12 @@ func (ss *SqsService) SendMessageInBatch(batch []*Object) {
 }
 
 // ReceiveMessages function receives many messages in batch from the Queue
-func (ss *SqsService) ReceiveMessages() (obj *Object, receiptHandle *string) {
+func (ss *SqsService) ReceiveMessages(ctx context.Context) (obj *Object, receiptHandle *string) {
 
 	input := &sqs.ReceiveMessageInput{
 		QueueUrl: &ss.queueURL,
 	}
-	output, err := ss.client.ReceiveMessage(ss.ctx, input)
+	output, err := ss.client.ReceiveMessage(ctx, input)
 
 	if err != nil {
 		log.Fatalf("Unable to read message from Queue %s - %s", ss.queueName, err.Error())
@@ -232,7 +226,7 @@ func (ss *SqsService) ReceiveMessages() (obj *Object, receiptHandle *string) {
 
 // DeleteMessage function is used to delete message from the Queue
 // Returns True if message is deleted successfully
-func (ss *SqsService) DeleteMessage(rh *string) (ok bool) {
+func (ss *SqsService) DeleteMessage(ctx context.Context, rh *string) (ok bool) {
 
 	log.Printf("Delete Message from Queue\n")
 
@@ -241,7 +235,7 @@ func (ss *SqsService) DeleteMessage(rh *string) (ok bool) {
 		ReceiptHandle: rh,
 	}
 
-	_, err := ss.client.DeleteMessage(ss.ctx, input)
+	_, err := ss.client.DeleteMessage(ctx, input)
 
 	if err != nil {
 		log.Printf("Unable to delete message from Queue %s - %s", ss.queueName, err.Error())
@@ -277,7 +271,7 @@ func (ss *SqsService) IsQueueEmpty() bool {
 }
 
 // GetParameterValue is a function to check if the Queue is empty or not
-func (s *SsmService) GetParameterValue(param *string, withDecryption bool) *string {
+func (s *SsmService) GetParameterValue(ctx context.Context, param *string, withDecryption bool) *string {
 	log.Printf("Get Parameter Value of %s from SSM\n", *param)
 
 	input := &ssm.GetParameterInput{
@@ -285,7 +279,7 @@ func (s *SsmService) GetParameterValue(param *string, withDecryption bool) *stri
 		WithDecryption: withDecryption,
 	}
 
-	output, err := s.client.GetParameter(s.ctx, input)
+	output, err := s.client.GetParameter(ctx, input)
 
 	if err != nil {
 		log.Printf("Error getting Parameter Value of %s from SSM - %s", *param, err.Error())
@@ -295,7 +289,7 @@ func (s *SsmService) GetParameterValue(param *string, withDecryption bool) *stri
 }
 
 // CreateItem is a function to ...
-func (db *DBService) CreateItem(o *Object, uploadID *string) error {
+func (db *DBService) CreateItem(ctx context.Context, o *Object, uploadID *string) error {
 	log.Printf("Create a record of %s in DynamoDB\n", o.Key)
 
 	// item := make(map[string]dtype.AttributeValue)
@@ -323,7 +317,7 @@ func (db *DBService) CreateItem(o *Object, uploadID *string) error {
 			Item:      itemAttr,
 		}
 
-		_, err = db.client.PutItem(db.ctx, input)
+		_, err = db.client.PutItem(ctx, input)
 
 		if err != nil {
 			log.Printf("Error creating a record of %s in DynamoDB - %s\n", o.Key, err.Error())
@@ -335,7 +329,7 @@ func (db *DBService) CreateItem(o *Object, uploadID *string) error {
 }
 
 // UpdateItem is a function to ...
-func (db *DBService) UpdateItem(key *string, result *TransferResult) error {
+func (db *DBService) UpdateItem(ctx context.Context, key *string, result *TransferResult) error {
 	log.Printf("Update a record of %s in DynamoDB\n", *key)
 
 	keyAttr := make(map[string]dtype.AttributeValue)
@@ -356,7 +350,7 @@ func (db *DBService) UpdateItem(key *string, result *TransferResult) error {
 		UpdateExpression: &expr,
 	}
 
-	_, err := db.client.UpdateItem(db.ctx, input)
+	_, err := db.client.UpdateItem(ctx, input)
 
 	if err != nil {
 		log.Printf("Error updating a record of %s in DynamoDB - %s\n", *key, err.Error())
@@ -372,7 +366,7 @@ func (db *DBService) UpdateItem(key *string, result *TransferResult) error {
 }
 
 // QueryItem is a function to ...
-func (db *DBService) QueryItem(key *string) (item *Item) {
+func (db *DBService) QueryItem(ctx context.Context, key *string) (item *Item) {
 	log.Printf("Create a record of %s in DynamoDB\n", *key)
 
 	input := &dynamodb.GetItemInput{
@@ -382,7 +376,7 @@ func (db *DBService) QueryItem(key *string) (item *Item) {
 		},
 	}
 
-	output, err := db.client.GetItem(db.ctx, input)
+	output, err := db.client.GetItem(ctx, input)
 
 	if err != nil {
 		log.Printf("Error getting a record of %s in DynamoDB - %s\n", *key, err.Error())

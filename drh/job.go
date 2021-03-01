@@ -11,7 +11,7 @@ import (
 // Job is an interface of a process to run by this tool
 // A Job must have a Run() method
 type Job interface {
-	Run()
+	Run(ctx context.Context)
 }
 
 // Finder is an implemenation of Job interface
@@ -45,7 +45,7 @@ type TransferResult struct {
 }
 
 // helper function to check credentials
-func getCredentials(param string, inCurrentAccount bool, sm *SsmService) *S3Credentials {
+func getCredentials(ctx context.Context, param string, inCurrentAccount bool, sm *SsmService) *S3Credentials {
 	cred := &S3Credentials{
 		noSignRequest: false,
 	}
@@ -56,7 +56,7 @@ func getCredentials(param string, inCurrentAccount bool, sm *SsmService) *S3Cred
 			// no credential is required.
 			cred.noSignRequest = true
 		} else {
-			credStr := sm.GetParameterValue(&param, true)
+			credStr := sm.GetParameterValue(ctx, &param, true)
 			if credStr != nil {
 				credMap := make(map[string]string)
 				err := json.Unmarshal([]byte(*credStr), &credMap)
@@ -84,8 +84,8 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 		log.Printf("Warning - Unable to load credentials, use default setting - %s\n", err.Error())
 	}
 
-	srcCred := getCredentials(cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
-	desCred := getCredentials(cfg.DestCredential, cfg.DestInCurrentAccount, sm)
+	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
+	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 	// log.Printf("Cred is %v\n", srcCred)
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
@@ -100,9 +100,9 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 }
 
 // List objects in source bucket
-func (f *Finder) getSourceObjects(token *string, prefix *string) []*Object {
+func (f *Finder) getSourceObjects(ctx context.Context, token *string, prefix *string) []*Object {
 	// log.Printf("Getting source list with token %s", *token)
-	result, err := f.srcClient.ListObjects(token, prefix, f.cfg.MaxKeys)
+	result, err := f.srcClient.ListObjects(ctx, token, prefix, f.cfg.MaxKeys)
 	if err != nil {
 		log.Printf("Fail to get source list - %s\n", err.Error())
 		// Log the last token and exit
@@ -112,7 +112,7 @@ func (f *Finder) getSourceObjects(token *string, prefix *string) []*Object {
 }
 
 // List objects in destination bucket, load the full list into a map
-func (f *Finder) getTargetObjects(prefix *string) (objects map[string]*int64) {
+func (f *Finder) getTargetObjects(ctx context.Context, prefix *string) (objects map[string]*int64) {
 
 	log.Printf("Getting target list in /%s\n", *prefix)
 
@@ -120,7 +120,7 @@ func (f *Finder) getTargetObjects(prefix *string) (objects map[string]*int64) {
 	objects = make(map[string]*int64)
 
 	for token != "End" {
-		jobs, err := f.desClient.ListObjects(&token, prefix, f.cfg.MaxKeys)
+		jobs, err := f.desClient.ListObjects(ctx, &token, prefix, f.cfg.MaxKeys)
 		if err != nil {
 			log.Fatalf("Error listing objects in destination bucket - %s\n", err.Error())
 		}
@@ -138,11 +138,11 @@ func (f *Finder) getTargetObjects(prefix *string) (objects map[string]*int64) {
 
 // This function will compare source and target and get a list of delta,
 // and then send delta to SQS Queue.
-func (f *Finder) compareAndSend(prefix *string, msgCh chan struct{}, compareCh chan struct{}, wg *sync.WaitGroup) {
+func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan struct{}, compareCh chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	log.Printf("Comparing in /%s\n", *prefix)
-	target := f.getTargetObjects(prefix)
+	target := f.getTargetObjects(ctx, prefix)
 
 	token := ""
 	i, j := 0, 0
@@ -153,7 +153,7 @@ func (f *Finder) compareAndSend(prefix *string, msgCh chan struct{}, compareCh c
 	log.Printf("Start comparing source with target...\n")
 
 	for token != "End" {
-		source := f.getSourceObjects(&token, prefix)
+		source := f.getSourceObjects(ctx, &token, prefix)
 
 		for _, obj := range source {
 			// TODO: Check if there is another way to compare
@@ -173,7 +173,7 @@ func (f *Finder) compareAndSend(prefix *string, msgCh chan struct{}, compareCh c
 
 					go func(batch []*Object) {
 						defer wg.Done()
-						f.sqs.SendMessageInBatch(batch)
+						f.sqs.SendMessageInBatch(ctx, batch)
 						<-msgCh
 					}(batch)
 				}
@@ -187,7 +187,7 @@ func (f *Finder) compareAndSend(prefix *string, msgCh chan struct{}, compareCh c
 		msgCh <- struct{}{}
 		go func(batch []*Object) {
 			defer wg.Done()
-			f.sqs.SendMessageInBatch(batch[:i])
+			f.sqs.SendMessageInBatch(ctx, batch[:i])
 			<-msgCh
 		}(batch)
 	}
@@ -198,7 +198,7 @@ func (f *Finder) compareAndSend(prefix *string, msgCh chan struct{}, compareCh c
 }
 
 // Run is main execution function for Finder.
-func (f *Finder) Run() {
+func (f *Finder) Run(ctx context.Context) {
 
 	// Maximum number of queued messages to be sent to SQS
 	var bufferSize int = 10000
@@ -212,7 +212,7 @@ func (f *Finder) Run() {
 	// Note that bigger number needs more memory
 	compareCh := make(chan struct{}, f.cfg.FinderNumber)
 
-	prefixes := f.srcClient.ListCommonPrefixes(f.cfg.FinderDepth, f.cfg.MaxKeys)
+	prefixes := f.srcClient.ListCommonPrefixes(ctx, f.cfg.FinderDepth, f.cfg.MaxKeys)
 
 	var wg sync.WaitGroup
 
@@ -221,7 +221,7 @@ func (f *Finder) Run() {
 	for _, p := range prefixes {
 		compareCh <- struct{}{}
 		wg.Add(1)
-		go f.compareAndSend(p, msgCh, compareCh, &wg)
+		go f.compareAndSend(ctx, p, msgCh, compareCh, &wg)
 	}
 	wg.Wait()
 
@@ -241,8 +241,8 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 		log.Printf("Warning - Unable to load credentials, use default setting - %s\n", err.Error())
 	}
 
-	srcCred := getCredentials(cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
-	desCred := getCredentials(cfg.DestCredential, cfg.DestInCurrentAccount, sm)
+	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
+	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
 	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
@@ -257,7 +257,7 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 }
 
 // Run a Worker job
-func (w *Worker) Run() {
+func (w *Worker) Run(ctx context.Context) {
 	// log.Println("Start migration...")
 
 	// A channel to block number of messages to be processed
@@ -273,7 +273,7 @@ func (w *Worker) Run() {
 	resultCh := make(chan *TransferResult, w.cfg.WorkerNumber*2)
 
 	for {
-		obj, rh := w.sqs.ReceiveMessages()
+		obj, rh := w.sqs.ReceiveMessages(ctx)
 
 		if obj == nil {
 			log.Println("No messages, sleep...")
@@ -285,8 +285,8 @@ func (w *Worker) Run() {
 		log.Printf("Received message with key %s, start processing...\n", obj.Key)
 
 		processCh <- struct{}{}
-		go w.startMigration(obj, transferCh, resultCh)
-		go w.processResult(obj, rh, processCh, resultCh)
+		go w.startMigration(ctx, obj, transferCh, resultCh)
+		go w.processResult(ctx, obj, rh, processCh, resultCh)
 	}
 }
 
@@ -305,17 +305,17 @@ func (w *Worker) Run() {
 // }
 
 // startMigration is a function to
-func (w *Worker) processResult(obj *Object, rh *string, processCh <-chan struct{}, resultCh <-chan *TransferResult) {
+func (w *Worker) processResult(ctx context.Context, obj *Object, rh *string, processCh <-chan struct{}, resultCh <-chan *TransferResult) {
 	// log.Println("Start migration...")
 
 	res := <-resultCh
 
 	if res.status == "DONE" {
-		w.sqs.DeleteMessage(rh)
+		w.sqs.DeleteMessage(ctx, rh)
 		// log.Printf("Delete Message%s", *rh)
 	}
 
-	w.db.UpdateItem(&obj.Key, res)
+	w.db.UpdateItem(ctx, &obj.Key, res)
 
 	log.Printf("Complete one job %s with status %s\n", obj.Key, res.status)
 	<-processCh
@@ -323,13 +323,13 @@ func (w *Worker) processResult(obj *Object, rh *string, processCh <-chan struct{
 }
 
 // startMigration is a function to
-func (w *Worker) startMigration(obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
+func (w *Worker) startMigration(ctx context.Context, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
 	// log.Println("Start migration...")
 
 	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
 
 	// w.db.CreateItem(obj, nil)
-	item := w.db.QueryItem(&obj.Key)
+	item := w.db.QueryItem(ctx, &obj.Key)
 	log.Printf("Found Item %s", item.JobStatus)
 
 	if item.JobStatus == "STARTED" {
@@ -337,33 +337,33 @@ func (w *Worker) startMigration(obj *Object, transferCh chan struct{}, resultCh 
 	} else {
 
 		if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
-			w.migrateSmallFile(obj, transferCh, resultCh)
+			w.migrateSmallFile(ctx, obj, transferCh, resultCh)
 		} else {
-			w.migrateBigFile(obj, transferCh, resultCh)
+			w.migrateBigFile(ctx, obj, transferCh, resultCh)
 		}
 	}
 
 }
 
-func (w *Worker) migrateSmallFile(obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
+func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
 
 	var etag *string
 	var err error
 	status := "DONE"
 
-	w.db.CreateItem(obj, nil)
+	w.db.CreateItem(ctx, obj, nil)
 
 	// Add a transferring record
 	transferCh <- struct{}{}
 
 	log.Printf("----->Downloading %d Bytes from %s/%s\n", obj.Size, w.cfg.SrcBucketName, obj.Key)
 
-	body, err := w.srcClient.GetObject(obj.Key, obj.Size, 0, obj.Size, "null")
+	body, err := w.srcClient.GetObject(ctx, obj.Key, obj.Size, 0, obj.Size, "null")
 	if err != nil {
 		status = "ERROR"
 
 	} else {
-		etag, err = w.desClient.PutObject(obj.Key, body, w.cfg.DestStorageClass)
+		etag, err = w.desClient.PutObject(ctx, obj.Key, body, w.cfg.DestStorageClass)
 		if err != nil {
 			status = "ERROR"
 		}
@@ -378,7 +378,7 @@ func (w *Worker) migrateSmallFile(obj *Object, transferCh chan struct{}, resultC
 	<-transferCh
 }
 
-func (w *Worker) migrateBigFile(obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
+func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
 	// log.Println("Download and Upload big file")
 
 	chunkSize := w.cfg.ChunkSize * MB
@@ -394,13 +394,13 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan struct{}, resultCh 
 	// log.Println("Upload ID can not be found")
 
 	// Else Create a new upload ID
-	uploadID, err := w.desClient.CreateMultipartUpload(obj.Key)
+	uploadID, err := w.desClient.CreateMultipartUpload(ctx, obj.Key)
 
 	if err != nil {
 		log.Printf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
 	}
 
-	w.db.CreateItem(obj, uploadID)
+	w.db.CreateItem(ctx, obj, uploadID)
 
 	totalParts := int(obj.Size/int64(chunkSize)) + 1
 
@@ -426,13 +426,13 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan struct{}, resultCh 
 
 			log.Printf("----->Downloading %d Bytes from %s/%s\n", chunkSize, w.cfg.SrcBucketName, obj.Key)
 
-			body, err := w.srcClient.GetObject(obj.Key, obj.Size, int64(i*chunkSize), int64(chunkSize), "null")
+			body, err := w.srcClient.GetObject(ctx, obj.Key, obj.Size, int64(i*chunkSize), int64(chunkSize), "null")
 			if err != nil {
 				// log.Fatalln(err.Error())
 				status = "ERROR"
 			} else {
 				log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucketName, obj.Key, partNumber)
-				_etag, err = w.desClient.UploadPart(obj.Key, uploadID, body, partNumber)
+				_etag, err = w.desClient.UploadPart(ctx, obj.Key, uploadID, body, partNumber)
 				if err != nil {
 					// log.Fatalln(err.Error())
 					status = "ERROR"
@@ -461,10 +461,10 @@ func (w *Worker) migrateBigFile(obj *Object, transferCh chan struct{}, resultCh 
 
 	}
 
-	etag, err = w.desClient.CompleteMultipartUpload(obj.Key, uploadID, parts)
+	etag, err = w.desClient.CompleteMultipartUpload(ctx, obj.Key, uploadID, parts)
 	if err != nil {
 		log.Printf("Complete upload failed - %s\n", err.Error())
-		w.desClient.AbortMultipartUpload(obj.Key, uploadID)
+		w.desClient.AbortMultipartUpload(ctx, obj.Key, uploadID)
 		status = "ERROR"
 	} else {
 		log.Printf("Complete one job %s with etag %s\n", obj.Key, *etag)

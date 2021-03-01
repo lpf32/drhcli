@@ -143,7 +143,7 @@ func initConfig() {
 		SrcBucketPrefix:      viper.GetString("srcBucketPrefix"),
 		SrcRegion:            viper.GetString("srcRegion"),
 		SrcCredential:        viper.GetString("srcCredential"),
-		SrcInCurrentAccount:  viper.GetBool("SrcInCurrentAccount"),
+		SrcInCurrentAccount:  viper.GetBool("srcInCurrentAccount"),
 		DestBucketName:       viper.GetString("destBucketName"),
 		DestBucketPrefix:     viper.GetString("destBucketPrefix"),
 		DestRegion:           viper.GetString("destRegion"),
@@ -199,6 +199,6 @@ Supported types:
 			log.Fatalf("Unknown Job Type - %s. Type must be either Finder or Worker\n, please start again", jobType)
 
 		}
-		job.Run()
+		job.Run(ctx)
 	},
 }
