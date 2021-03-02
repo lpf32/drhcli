@@ -18,9 +18,9 @@ import (
 
 // Item holds info about the items to be stored in DynamoDB
 type Item struct {
-	ObjectKey, JobStatus, Etag, UploadID string
-	Size, StartTimestamp, EndTimestamp   int64
-	StartTime, EndTime                   string
+	ObjectKey, JobStatus, Etag         string
+	Size, StartTimestamp, EndTimestamp int64
+	StartTime, EndTime                 string
 	// ExtraInfo               Metadata
 }
 
@@ -229,8 +229,7 @@ func (ss *SqsService) ReceiveMessages(ctx context.Context) (obj *Object, receipt
 // DeleteMessage function is used to delete message from the Queue
 // Returns True if message is deleted successfully
 func (ss *SqsService) DeleteMessage(ctx context.Context, rh *string) (ok bool) {
-
-	log.Printf("Delete Message from Queue\n")
+	// log.Printf("Delete Message from Queue\n")
 
 	input := &sqs.DeleteMessageInput{
 		QueueUrl:      &ss.queueURL,
@@ -312,16 +311,10 @@ func (s *SsmService) GetParameterValue(ctx context.Context, param *string, withD
 	return output.Parameter.Value
 }
 
-// CreateItem is a function to ...
-func (db *DBService) CreateItem(ctx context.Context, o *Object, uploadID *string) error {
-	log.Printf("Create a record of %s in DynamoDB\n", o.Key)
-
-	// item := make(map[string]dtype.AttributeValue)
-	// item["objectKey"] = &dtype.AttributeValueMemberS{Value: o.Key}
-	// item["size"] = &dtype.AttributeValueMemberN{Value: fmt.Sprintf("%d", o.Size)}
-	// item["status"] = &dtype.AttributeValueMemberS{Value: "STARTED"}
-	// item["startTime"] = &dtype.AttributeValueMemberS{Value: time.Now().Format("2006/01/02 15:04:05")}
-	// item["startTimestamp"] = &dtype.AttributeValueMemberN{Value: fmt.Sprintf("%d", time.Now().Unix())}
+// PutItem is a function to creates a new item, or replaces an old item with a new item in DynamoDB
+// Restart a transfer of an object will replace the old item with new info
+func (db *DBService) PutItem(ctx context.Context, o *Object) error {
+	// log.Printf("Put item for %s in DynamoDB\n", o.Key)
 
 	item := &Item{
 		ObjectKey:      o.Key,
@@ -329,8 +322,8 @@ func (db *DBService) CreateItem(ctx context.Context, o *Object, uploadID *string
 		JobStatus:      "STARTED",
 		StartTime:      time.Now().Format("2006/01/02 15:04:05"),
 		StartTimestamp: time.Now().Unix(),
-		// UploadID:       *uploadID,
 	}
+
 	itemAttr, err := attributevalue.MarshalMap(item)
 
 	if err != nil {
@@ -344,7 +337,7 @@ func (db *DBService) CreateItem(ctx context.Context, o *Object, uploadID *string
 		_, err = db.client.PutItem(ctx, input)
 
 		if err != nil {
-			log.Printf("Error creating a record of %s in DynamoDB - %s\n", o.Key, err.Error())
+			log.Printf("Failed to put item for %s in DynamoDB - %s\n", o.Key, err.Error())
 			// return nil
 		}
 	}
@@ -352,38 +345,36 @@ func (db *DBService) CreateItem(ctx context.Context, o *Object, uploadID *string
 	return err
 }
 
-// UpdateItem is a function to ...
+// UpdateItem is a function to update an item in DynamoDB
 func (db *DBService) UpdateItem(ctx context.Context, key *string, result *TransferResult) error {
-	log.Printf("Update a record of %s in DynamoDB\n", *key)
-
-	keyAttr := make(map[string]dtype.AttributeValue)
-	keyAttr["ObjectKey"] = &dtype.AttributeValueMemberS{Value: *key}
+	// log.Printf("Update item for %s in DynamoDB\n", *key)
 
 	etag := ""
-
 	if result.etag != nil {
 		etag = *result.etag
 	}
 
-	expr := "set JobStatus = :s, Etag = :tg, EndTime = :et, EndTimeStamp = :etm"
+	expr := "set JobStatus = :s, Etag = :tg, EndTime = :et, EndTimestamp = :etm"
 
 	input := &dynamodb.UpdateItemInput{
 		TableName: &db.tableName,
-		Key:       keyAttr,
+		Key: map[string]dtype.AttributeValue{
+			"ObjectKey": &dtype.AttributeValueMemberS{Value: *key},
+		},
 		ExpressionAttributeValues: map[string]dtype.AttributeValue{
 			":s":   &dtype.AttributeValueMemberS{Value: result.status},
 			":tg":  &dtype.AttributeValueMemberS{Value: etag},
 			":et":  &dtype.AttributeValueMemberS{Value: time.Now().Format("2006/01/02 15:04:05")},
-			":etm": &dtype.AttributeValueMemberS{Value: fmt.Sprintf("%d", time.Now().Unix())},
+			":etm": &dtype.AttributeValueMemberN{Value: fmt.Sprintf("%d", time.Now().Unix())},
 		},
-		ReturnValues:     "UPDATED_NEW",
+		ReturnValues:     "NONE",
 		UpdateExpression: &expr,
 	}
 
 	_, err := db.client.UpdateItem(ctx, input)
 
 	if err != nil {
-		log.Printf("Error updating a record of %s in DynamoDB - %s\n", *key, err.Error())
+		log.Printf("Failed to update item for %s in DynamoDB - %s\n", *key, err.Error())
 		// return nil
 	}
 	// item = &Item{}
@@ -395,9 +386,9 @@ func (db *DBService) UpdateItem(ctx context.Context, key *string, result *Transf
 	return err
 }
 
-// QueryItem is a function to ...
-func (db *DBService) QueryItem(ctx context.Context, key *string) (item *Item) {
-	log.Printf("Create a record of %s in DynamoDB\n", *key)
+// QueryItem is a function to query an item by Key in DynamoDB
+func (db *DBService) QueryItem(ctx context.Context, key *string) (*Item, error) {
+	// log.Printf("Query item for %s in DynamoDB\n", *key)
 
 	input := &dynamodb.GetItemInput{
 		TableName: &db.tableName,
@@ -409,16 +400,21 @@ func (db *DBService) QueryItem(ctx context.Context, key *string) (item *Item) {
 	output, err := db.client.GetItem(ctx, input)
 
 	if err != nil {
-		log.Printf("Error getting a record of %s in DynamoDB - %s\n", *key, err.Error())
-		// return nil
+		log.Printf("Error querying item for %s in DynamoDB - %s\n", *key, err.Error())
+		return nil, err
 	}
 
-	item = &Item{}
+	if output.Item == nil {
+		log.Printf("Item for %s does not exist in DynamoDB", *key)
+		return nil, nil
+	}
+
+	item := &Item{}
 
 	err = attributevalue.UnmarshalMap(output.Item, item)
 	if err != nil {
-		log.Printf("failed to unmarshal Dynamodb Scan Items, %v", err)
+		log.Printf("Failed to unmarshal Dynamodb Query result, %v", err)
 	}
-	return
+	return item, nil
 
 }

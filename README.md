@@ -18,8 +18,9 @@ Below features are planed in the first offical release
 - [x] Store replication status in DynamoDB
 - [ ] Support replicate Metadata info (Head Object)
 - [ ] Support S3 Event Messages
-- [ ] Support Mulipart uploads when upload ID already exists
+- [x] Support Mulipart uploads when upload ID already exists
 - [ ] Support Other cloud storage service
+- [ ] Implement heart beat for large file transfer (extend message visibility timeout)
 - [ ] Add logic when destination prefix is not empty
 - [x] Create docker image
 - [ ] Create Unit Test cases

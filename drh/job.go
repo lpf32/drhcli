@@ -31,12 +31,6 @@ type Worker struct {
 	db                   *DBService
 }
 
-// Part represents a part for multipart upload
-type Part struct {
-	partNumber int
-	etag       *string
-}
-
 // TransferResult stores the result after transfer.
 type TransferResult struct {
 	status string
@@ -271,12 +265,12 @@ func (w *Worker) Run(ctx context.Context) {
 	processCh := make(chan struct{}, w.cfg.WorkerNumber)
 
 	// Channel to block number of objects/parts to be processed.
-	// Buffer size is cfg.WorkerNumber * 2 (More buffer for multipart upload)
-	transferCh := make(chan struct{}, w.cfg.WorkerNumber*2)
+	// Buffer size is cfg.WorkerNumber * 2 - 1 (More buffer for multipart upload)
+	transferCh := make(chan struct{}, w.cfg.WorkerNumber*2-1)
 
 	// Channel to store transfer result
 	// Buffer size is same as transfer Channel
-	resultCh := make(chan *TransferResult, w.cfg.WorkerNumber*2)
+	// resultCh := make(chan *TransferResult, w.cfg.WorkerNumber*2)
 
 	for {
 		obj, rh := w.sqs.ReceiveMessages(ctx)
@@ -287,214 +281,250 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 
-		// log.Printf("Received message with key %s, start processing...\n", obj.Key)
+		// log.Printf("Received message with key %s, start processing...\n", &obj.Key)
 
 		processCh <- struct{}{}
-		go w.startMigration(ctx, obj, transferCh, resultCh)
-		go w.processResult(ctx, obj, rh, processCh, resultCh)
+		go w.startMigration(ctx, obj, rh, transferCh, processCh)
+
 	}
 }
 
-// startMigration is a function to
-func (w *Worker) processResult(ctx context.Context, obj *Object, rh *string, processCh <-chan struct{}, resultCh <-chan *TransferResult) {
-	// log.Println("Start migration...")
+// startMigration is a function to migrate an object from source to destination
+func (w *Worker) startMigration(ctx context.Context, obj *Object, rh *string, transferCh chan struct{}, processCh <-chan struct{}) {
 
-	res := <-resultCh
+	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
+
+	// Check if an item already exists in DynamoDB
+	// item, _ := w.db.QueryItem(ctx, &obj.Key)
+
+	// Log in DynamoDB
+	w.db.PutItem(ctx, obj)
+
+	var res *TransferResult
+
+	if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
+		res = w.migrateSmallFile(ctx, obj, transferCh)
+	} else {
+		res = w.migrateBigFile(ctx, obj, transferCh)
+	}
+
+	w.processResult(ctx, obj, rh, res, transferCh)
+
+}
+
+// processResult is a function to process transfer result, including delete the message, log to DynamoDB
+func (w *Worker) processResult(ctx context.Context, obj *Object, rh *string, res *TransferResult, processCh <-chan struct{}) {
+	// log.Println("Processing result...")
+
+	log.Printf("Completed migration of %s with status %s\n", obj.Key, res.status)
+	w.db.UpdateItem(ctx, &obj.Key, res)
 
 	if res.status == "DONE" {
 		w.sqs.DeleteMessage(ctx, rh)
-		// log.Printf("Delete Message%s", *rh)
+		log.Printf("----->Transferred 1 object %s successfully\n", obj.Key)
 	}
 
-	w.db.UpdateItem(ctx, &obj.Key, res)
-
-	log.Printf("Complete one job %s with status %s\n", obj.Key, res.status)
 	<-processCh
 
 }
 
-// startMigration is a function to
-func (w *Worker) startMigration(ctx context.Context, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
-	// log.Println("Start migration...")
-
-	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
-
-	// w.db.CreateItem(obj, nil)
-	item := w.db.QueryItem(ctx, &obj.Key)
-	log.Printf("Found Item %s", item.JobStatus)
-
-	if item.JobStatus == "STARTED" {
-		log.Println("Item already started, quit...")
-	} else {
-
-		if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
-			w.migrateSmallFile(ctx, obj, transferCh, resultCh)
-		} else {
-			w.migrateBigFile(ctx, &item.UploadID, obj, transferCh, resultCh)
-		}
-	}
-
-}
-
 // Internal func to deal with the transferring of small file.
-// First GetObject, then PutObject to transfer small file
-func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
-
-	var etag *string
-	var err error
-	status := "DONE"
-
-	w.db.CreateItem(ctx, obj, nil)
+// Simply transfer the whole object
+func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh chan struct{}) *TransferResult {
 
 	// Add a transferring record
 	transferCh <- struct{}{}
 
-	log.Printf("----->Downloading %d Bytes from %s/%s\n", obj.Size, w.cfg.SrcBucketName, obj.Key)
+	result := w.transfer(ctx, obj, nil, 0, obj.Size, 0)
+	// log.Printf("Completed the transfer of %s with etag %s\n", obj.Key, *result.etag)
 
-	// TODO: Add metadata to GetObject result
-	body, err := w.srcClient.GetObject(ctx, obj.Key, obj.Size, 0, obj.Size, "null")
-	if err != nil {
-		status = "ERROR"
+	// Remove the transferring record  after transfer is completed
+	<-transferCh
+
+	return result
+
+}
+
+// Internal func to deal with the transferring of large file.
+// First need to create/get an uploadID, then use UploadID to upload each parts
+// Finally, need to combine all parts into a single file.
+func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, transferCh chan struct{}) *TransferResult {
+
+	var err error
+	var parts map[int]*Part
+
+	uploadID := w.desClient.GetUploadID(ctx, &obj.Key)
+
+	// If uploadID Found, use list parts to get all existing parts.
+	// Else Create a new upload ID
+	if uploadID != nil {
+		// log.Printf("Found upload ID %s", *uploadID)
+		parts = w.desClient.ListParts(ctx, &obj.Key, uploadID)
 
 	} else {
-		etag, err = w.desClient.PutObject(ctx, obj.Key, body, w.cfg.DestStorageClass)
+		// TODO: Get metadata first by HeadObject
+		// Add metadata to CreateMultipartUpload func.
+		uploadID, err = w.desClient.CreateMultipartUpload(ctx, &obj.Key)
+
 		if err != nil {
-			status = "ERROR"
+			log.Printf("Failed to create upload ID - %s for %s\n", err.Error(), obj.Key)
+			return &TransferResult{
+				status: "ERROR",
+				err:    err,
+			}
 		}
 	}
 
-	resultCh <- &TransferResult{
-		status: status,
-		etag:   etag,
-		err:    err,
+	allParts, err := w.startMultipartUpload(ctx, obj, uploadID, parts, transferCh)
+
+	if err != nil {
+		return &TransferResult{
+			status: "ERROR",
+			err:    err,
+		}
+
 	}
-	// Remove the transferring record  after transfer is completed
-	<-transferCh
+
+	etag, err := w.desClient.CompleteMultipartUpload(ctx, &obj.Key, uploadID, allParts)
+	if err != nil {
+		log.Printf("Failed to complete upload for %s - %s\n", obj.Key, err.Error())
+		w.desClient.AbortMultipartUpload(ctx, &obj.Key, uploadID)
+		return &TransferResult{
+			status: "ERROR",
+			err:    err,
+		}
+
+	}
+	// log.Printf("Completed the transfer of %s with etag %s\n", obj.Key, *etag)
+	return &TransferResult{
+		status: "DONE",
+		etag:   etag,
+		err:    nil,
+	}
+
 }
 
+// A func to get total number of parts required based on object size
+// Auto extend chunk size if total parts are greater than MaxParts (10000)
 func (w *Worker) getTotalParts(size int64) (totalParts, chunkSize int) {
-
+	// Max number of Parts allowed by Amazon S3 is 10000
 	maxParts := 10000
 
-	// chunkSize = w.cfg.ChunkSize
 	chunkSize = w.cfg.ChunkSize * MB
-
-	// Auto extend chunk size if total parts are greater than MaxParts (10000)
 	totalParts = int(size/int64(chunkSize)) + 1
 
 	if totalParts > maxParts {
 		totalParts = maxParts
 		chunkSize = int(size/int64(maxParts)) + 1024
 	}
-
-	return totalParts, chunkSize
+	return
 }
 
-// Internal func to deal with the transferring of large file.
-// First need to create/get an uploadID, then use UploadID to upload each parts
-// Finally, need to combine all parts into a single file.
-func (w *Worker) migrateBigFile(ctx context.Context, uploadID *string, obj *Object, transferCh chan struct{}, resultCh chan<- *TransferResult) {
-	// log.Println("Download and Upload big file")
+// A func to perform multipart upload
+func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, uploadID *string, parts map[int](*Part), transferCh chan struct{}) ([]*Part, error) {
+
+	totalParts, chunkSize := w.getTotalParts(obj.Size)
+	// log.Printf("Total parts are %d for %s\n", totalParts, obj.Key)
 
 	var wg sync.WaitGroup
 
-	var etag *string
-	var err error
-	status := "DONE"
-
-	// If Yes, need to use list parts to get all existing parts.
-	// Else Create a new upload ID
-	if uploadID == nil {
-
-		// TODO: Get metadata first by HeadObject
-		// Add metadata to CreateMultipartUpload func.
-		uploadID, err = w.desClient.CreateMultipartUpload(ctx, obj.Key)
-
-		if err != nil {
-			log.Printf("Unable to create upload ID - %s for %s\n", err.Error(), obj.Key)
-		}
-
-		w.db.CreateItem(ctx, obj, uploadID)
-
-	} else {
-		log.Printf("UploadID exists\n, Listing parts")
-		// TODO: Implement logic when upload ID already existed
-		// list Parts
-
-	}
-
-	totalParts, chunkSize := w.getTotalParts(obj.Size)
-	log.Printf("Total parts are %d - for %s\n", totalParts, obj.Key)
-
-	wg.Add(totalParts)
-
-	// parts := make([]*Part, totalParts)
 	partCh := make(chan *Part, totalParts)
+	partErrorCh := make(chan error, totalParts) // Capture Errors
 
 	for i := 0; i < totalParts; i++ {
-
 		partNumber := i + 1
 
-		// check if part in list parts result.
-
-		// If not, upload the part
-		transferCh <- struct{}{}
-
-		go func(i int) {
-
-			defer wg.Done()
-
-			var _etag *string
-			var err error
-
-			log.Printf("----->Downloading %d Bytes from %s/%s\n", chunkSize, w.cfg.SrcBucketName, obj.Key)
-
-			body, err := w.srcClient.GetObject(ctx, obj.Key, obj.Size, int64(i*chunkSize), int64(chunkSize), "null")
-			if err != nil {
-				// log.Fatalln(err.Error())
-				status = "ERROR"
-			} else {
-				log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucketName, obj.Key, partNumber)
-				_etag, err = w.desClient.UploadPart(ctx, obj.Key, uploadID, body, partNumber)
-				if err != nil {
-					// log.Fatalln(err.Error())
-					status = "ERROR"
-				}
-				log.Printf("----->Upload completed, etag is %s\n", *_etag)
-
-			}
-
-			part := &Part{
-				partNumber: i + 1,
-				etag:       _etag,
-			}
+		if part, found := parts[partNumber]; found {
+			// log.Printf("Part %d found with etag %s, no need to transfer again/n", partNumber, *part.etag)
+			// Simply put the part info to the channel
 			partCh <- part
-			<-transferCh
-		}(i)
+		} else {
+			// If not, upload the part
+			wg.Add(1)
+			transferCh <- struct{}{}
+
+			go func(i int) {
+				defer wg.Done()
+
+				result := w.transfer(ctx, obj, uploadID, int64(i*chunkSize), int64(chunkSize), partNumber)
+
+				if result.err != nil {
+					partErrorCh <- result.err
+				} else {
+					part := &Part{
+						partNumber: i + 1,
+						etag:       result.etag,
+					}
+					partCh <- part
+				}
+
+				<-transferCh
+			}(i)
+		}
 	}
 
 	wg.Wait()
+	close(partErrorCh)
+	close(partCh)
 
-	parts := make([]*Part, totalParts)
+	for err := range partErrorCh {
+		// returned when at least 1 error
+		return nil, err
+	}
+
+	allParts := make([]*Part, totalParts)
 	for i := 0; i < totalParts; i++ {
 		// The list of parts must be in ascending order
 		p := <-partCh
-		parts[p.partNumber-1] = p
+		allParts[p.partNumber-1] = p
 
 	}
+	return allParts, nil
+}
 
-	etag, err = w.desClient.CompleteMultipartUpload(ctx, obj.Key, uploadID, parts)
+// transfer is a process to download data from source and upload to destination
+func (w *Worker) transfer(ctx context.Context, obj *Object, uploadID *string, start, chunkSize int64, partNumber int) (result *TransferResult) {
+	var etag *string
+	var err error
+
+	if start+chunkSize > obj.Size {
+		chunkSize = obj.Size - start
+	}
+
+	log.Printf("----->Downloading %d Bytes from %s/%s\n", chunkSize, w.cfg.SrcBucketName, obj.Key)
+
+	// TODO: Add metadata to GetObject result
+	body, err := w.srcClient.GetObject(ctx, &obj.Key, obj.Size, start, chunkSize, "null")
 	if err != nil {
-		log.Printf("Complete upload failed - %s\n", err.Error())
-		w.desClient.AbortMultipartUpload(ctx, obj.Key, uploadID)
-		status = "ERROR"
-	} else {
-		log.Printf("Complete one job %s with etag %s\n", obj.Key, *etag)
+		// status = "ERROR"
+		return &TransferResult{
+			status: "ERROR",
+			err:    err,
+		}
 	}
 
-	resultCh <- &TransferResult{
-		status: status,
-		etag:   etag,
-		err:    err,
+	// Use PutObject for single object upload
+	// Use UploadPart for multipart upload
+	if uploadID != nil {
+		log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucketName, obj.Key, partNumber)
+		etag, err = w.desClient.UploadPart(ctx, &obj.Key, uploadID, body, partNumber)
+
+	} else {
+		log.Printf("----->Uploading %d Bytes to %s/%s\n", chunkSize, w.cfg.DestBucketName, obj.Key)
+		etag, err = w.desClient.PutObject(ctx, &obj.Key, body, w.cfg.DestStorageClass)
 	}
+
+	if err != nil {
+		return &TransferResult{
+			status: "ERROR",
+			err:    err,
+		}
+	}
+
+	log.Printf("----->Complete %d Bytes from %s/%s to %s/%s\n", chunkSize, w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
+	return &TransferResult{
+		status: "DONE",
+		etag:   etag,
+	}
+
 }
