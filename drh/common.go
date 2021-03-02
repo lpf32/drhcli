@@ -25,6 +25,12 @@ type Object struct {
 	// StorageClass string
 }
 
+// Part represents a part for multipart upload
+type Part struct {
+	partNumber int
+	etag       *string
+}
+
 // Metadata info of object
 type Metadata struct {
 	ContentType string
