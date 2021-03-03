@@ -3,6 +3,8 @@ package drh
 import (
 	"encoding/json"
 	"log"
+	"net/url"
+	"strconv"
 )
 
 var (
@@ -20,9 +22,20 @@ var (
 
 // Object represents an object to be replicated.
 type Object struct {
-	Key  string
-	Size int64
-	// StorageClass string
+	Key       string `json:"key"`
+	Size      int64  `json:"size"`
+	Sequencer string `json:"sequencer,omitempty"`
+}
+
+// S3Event represents a basic structure of a S3 Event Message
+// See https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html for more details
+type S3Event struct {
+	Records []struct {
+		EventSource, AwsRegion, EventTime, EventName string
+		S3                                           struct {
+			Object `json:"object"`
+		}
+	}
 }
 
 // Part represents a part for multipart upload
@@ -53,10 +66,10 @@ func (o *Object) toString() *string {
 }
 
 // Helper function to create Object base on Json string
-func newObject(str string) (o *Object) {
+func newObject(str *string) (o *Object) {
 
 	o = new(Object)
-	err := json.Unmarshal([]byte(str), o)
+	err := json.Unmarshal([]byte(*str), o)
 
 	if err != nil {
 		log.Printf("Unable to convert string to object - %s", err.Error())
@@ -64,4 +77,32 @@ func newObject(str string) (o *Object) {
 	}
 	// log.Printf("Key: %s, Size: %d\n", m.Key, m.Size)
 	return
+}
+
+// Helper function to create S3Event base on Json string
+func newS3Event(str *string) (e *S3Event) {
+
+	e = new(S3Event)
+	err := json.Unmarshal([]byte(*str), e)
+
+	if err != nil {
+		log.Printf("Unable to convert string to S3 Event - %s", err.Error())
+		return nil
+	}
+	// log.Printf("Key: %s, Size: %d\n", m.Key, m.Size)
+	return
+}
+
+func getHex(str *string) int64 {
+	i64, _ := strconv.ParseInt(*str, 16, 64)
+	return i64
+}
+
+func unescape(str *string) string {
+	output, _ := url.QueryUnescape(*str)
+	return output
+}
+
+func escape(str *string) string {
+	return url.QueryEscape(*str)
 }

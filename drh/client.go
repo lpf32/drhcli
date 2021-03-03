@@ -24,7 +24,6 @@ type Client interface {
 	HeadObject(ctx context.Context, key *string)
 	GetObject(ctx context.Context, key *string, size, start, chunkSize int64, version string) ([]byte, error)
 	ListObjects(ctx context.Context, continuationToken, prefix *string, maxKeys int32) ([]*Object, error)
-
 	ListCommonPrefixes(ctx context.Context, depth int, maxKeys int32) (prefixes []*string)
 	ListParts(ctx context.Context, key, uploadID *string) (parts map[int]*Part)
 	GetUploadID(ctx context.Context, key *string) (uploadID *string)
@@ -35,6 +34,7 @@ type Client interface {
 	CompleteMultipartUpload(ctx context.Context, key, uploadID *string, parts []*Part) (etag *string, err error)
 	UploadPart(ctx context.Context, key, uploadID *string, body []byte, partNumber int) (etag *string, err error)
 	AbortMultipartUpload(ctx context.Context, key, uploadID *string) (err error)
+	DeleteObject(ctx context.Context, key *string) (err error)
 }
 
 // S3Client is an implementation of Client interface for Amazon S3
@@ -327,6 +327,22 @@ func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, stor
 
 	return
 
+}
+
+// DeleteObject is to abort failed multipart upload
+func (c *S3Client) DeleteObject(ctx context.Context, key *string) (err error) {
+	log.Printf("S3> Delete Object %s from Bucket %s\n", *key, c.bucket)
+
+	input := &s3.DeleteObjectInput{
+		Bucket: &c.bucket,
+		Key:    key,
+	}
+	_, err = c.client.DeleteObject(ctx, input)
+	if err != nil {
+		log.Printf("S3> Failed to delete object %s - %s\n", *key, err.Error())
+		return err
+	}
+	return nil
 }
 
 // UploadPart is
