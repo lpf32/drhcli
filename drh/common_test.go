@@ -15,9 +15,9 @@ func TestNewObject(t *testing.T) {
 		wantO *Object
 	}{
 		{
-			name: "Test1",
+			name: "Valid Json",
 			args: args{
-				str: `{"Key":"ABC","Size":100}`,
+				str: `{"key":"ABC","size":100}`,
 			},
 			wantO: &Object{
 				Key:  "ABC",
@@ -25,16 +25,32 @@ func TestNewObject(t *testing.T) {
 			},
 		},
 		{
-			name: "Test2",
+			name: "Invalid Json",
 			args: args{
-				str: "Non-Json",
+				str: "haha",
 			},
 			wantO: nil,
+		},
+		{
+			name: "More attributes",
+			args: args{
+				str: `{
+                    "key": "foo/bar.png",
+                    "size": 69913,
+                    "eTag": "b371f3a529a6ff3ecaa0e3ddb9b64a9e",
+                    "sequencer": "005FD83DA108ECB135"
+                }`,
+			},
+			wantO: &Object{
+				Key:       "foo/bar.png",
+				Size:      69913,
+				Sequencer: "005FD83DA108ECB135",
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if gotO := newObject(tt.args.str); !reflect.DeepEqual(gotO, tt.wantO) {
+			if gotO := newObject(&tt.args.str); !reflect.DeepEqual(gotO, tt.wantO) {
 				t.Errorf("newObject() = %v, want %v", gotO, tt.wantO)
 			}
 		})
@@ -42,33 +58,179 @@ func TestNewObject(t *testing.T) {
 }
 
 func TestObjectToString(t *testing.T) {
-	output := `{"Key":"ABC","Size":100}`
-	type fields struct {
-		Key  string
-		Size int64
-	}
+	output := `{"key":"ABC","size":100}`
+	output2 := `{"key":"ABC","size":100,"sequencer":"005FD83DA108ECB135"}`
+
 	tests := []struct {
-		name   string
-		fields fields
-		want   *string
+		name string
+		obj  *Object
+		want *string
 	}{
 		{
-			name: "Test1",
-			fields: fields{
+			name: "Test Omitempty",
+			obj: &Object{
 				Key:  "ABC",
 				Size: 100,
 			},
 			want: &output,
 		},
+		{
+			name: "Test Full",
+			obj: &Object{
+				Key:       "ABC",
+				Size:      100,
+				Sequencer: "005FD83DA108ECB135",
+			},
+			want: &output2,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			o := &Object{
-				Key:  tt.fields.Key,
-				Size: tt.fields.Size,
-			}
-			if got := o.toString(); !reflect.DeepEqual(got, tt.want) {
+			// o := &Object{
+			// 	Key:  tt.fields.Key,
+			// 	Size: tt.fields.Size,
+			// }
+			if got := tt.obj.toString(); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Object.toString() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewS3Event(t *testing.T) {
+	input := `{  
+		"Records":[  
+		   {  
+			  "eventVersion":"2.2",
+			  "eventSource":"aws:s3",
+			  "awsRegion":"us-west-2",
+			  "eventTime":"The time, in ISO-8601 format, for example, 1970-01-01T00:00:00.000Z, when Amazon S3 finished processing the request",
+			  "eventName":"ObjectCreated:Put",
+			  "userIdentity":{  
+				 "principalId":"Amazon-customer-ID-of-the-user-who-caused-the-event"
+			  },
+			  "requestParameters":{  
+				 "sourceIPAddress":"ip-address-where-request-came-from"
+			  },
+			  "responseElements":{  
+				 "x-amz-request-id":"Amazon S3 generated request ID",
+				 "x-amz-id-2":"Amazon S3 host that processed the request"
+			  },
+			  "s3":{  
+				 "s3SchemaVersion":"1.0",
+				 "configurationId":"ID found in the bucket notification configuration",
+				 "bucket":{  
+					"name":"bucket-name",
+					"ownerIdentity":{  
+					   "principalId":"Amazon-customer-ID-of-the-bucket-owner"
+					},
+					"arn":"bucket-ARN"
+				 },
+				 "object":{  
+					"key":"object-key",
+					"size": 1234567,
+					"eTag":"object eTag",
+					"versionId":"object version if bucket is versioning-enabled, otherwise null",
+					"sequencer": "a string representation of a hexadecimal value used to determine event sequence, only used with PUTs and DELETEs"
+				 }
+			  },
+			  "glacierEventData": {
+				 "restoreEventData": {
+					"lifecycleRestorationExpiryTime": "The time, in ISO-8601 format, for example, 1970-01-01T00:00:00.000Z, of Restore Expiry",
+					"lifecycleRestoreStorageClass": "Source storage class for restore"
+				 }
+			  }
+		   }
+		]
+	}`
+
+	got := newS3Event(&input)
+	if len(got.Records) != 1 {
+		t.Errorf("Expected input message has 1 record, got %d", len(got.Records))
+	}
+
+	if got.Records[0].EventName != "ObjectCreated:Put" {
+		t.Errorf("Expected input message has event name of %s, got %s", "ObjectCreated:Put", got.Records[0].EventName)
+	}
+
+	if got.Records[0].S3.Object.Key != "object-key" {
+		t.Errorf("Expected input message has object with key %s, got %s", "object-key", got.Records[0].S3.Key)
+	}
+
+}
+
+func TestGetHex(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		name string
+		args args
+		want int64
+	}{
+		{
+			name: "Test Convert",
+			args: args{"005FD83DA108ECB135"},
+			want: 6906337790421414197,
+		},
+		{
+			name: "Test Zero",
+			args: args{""},
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getHex(&tt.args.str); got != tt.want {
+				t.Errorf("getHex() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUunescape(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "Test",
+			args: args{"foo+%282%29.jpeg"},
+			want: "foo (2).jpeg",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := unescape(&tt.args.str); got != tt.want {
+				t.Errorf("unquote() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEscape(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "Test",
+			args: args{"foo (2).jpeg"},
+			want: "foo+%282%29.jpeg",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := escape(&tt.args.str); got != tt.want {
+				t.Errorf("escape() = %v, want %v", got, tt.want)
 			}
 		})
 	}

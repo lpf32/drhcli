@@ -18,7 +18,8 @@ import (
 
 // Item holds info about the items to be stored in DynamoDB
 type Item struct {
-	ObjectKey, JobStatus, Etag         string
+	ObjectKey                          string
+	JobStatus, Etag, Sequencer         string
 	Size, StartTimestamp, EndTimestamp int64
 	StartTime, EndTime                 string
 	// ExtraInfo               Metadata
@@ -164,19 +165,19 @@ func (ss *SqsService) SendMessage(ctx context.Context, o *Object) error {
 
 // SendMessageInBatch function sends messages to the Queue in batch.
 // Each batch can only contains up to 10 messages
-func (ss *SqsService) SendMessageInBatch(ctx context.Context, batch []*Object) {
+func (ss *SqsService) SendMessageInBatch(ctx context.Context, batch []*string) {
 	// log.Printf("Sending %d messages to Queue in batch ", len(batch))
 
 	// Assume batch size <= 10
 	entries := make([]types.SendMessageBatchRequestEntry, len(batch), len(batch))
 
-	for id, o := range batch {
+	for id, body := range batch {
 
 		idstr := strconv.Itoa(id)
 		// fmt.Printf("Id is %s\n", idstr)
 		entry := types.SendMessageBatchRequestEntry{
 			Id:          &idstr,
-			MessageBody: o.toString(),
+			MessageBody: body,
 		}
 		entries[id] = entry
 	}
@@ -196,7 +197,7 @@ func (ss *SqsService) SendMessageInBatch(ctx context.Context, batch []*Object) {
 }
 
 // ReceiveMessages function receives many messages in batch from the Queue
-func (ss *SqsService) ReceiveMessages(ctx context.Context) (obj *Object, receiptHandle *string) {
+func (ss *SqsService) ReceiveMessages(ctx context.Context) (body, receiptHandle *string) {
 
 	input := &sqs.ReceiveMessageInput{
 		QueueUrl: &ss.queueURL,
@@ -220,7 +221,7 @@ func (ss *SqsService) ReceiveMessages(ctx context.Context) (obj *Object, receipt
 
 	// TODO: Support S3 Event Message
 	// Need to check the format of the message body
-	obj = newObject(*output.Messages[0].Body)
+	body = output.Messages[0].Body
 	receiptHandle = output.Messages[0].ReceiptHandle
 
 	return
@@ -319,6 +320,7 @@ func (db *DBService) PutItem(ctx context.Context, o *Object) error {
 	item := &Item{
 		ObjectKey:      o.Key,
 		Size:           o.Size,
+		Sequencer:      o.Sequencer,
 		JobStatus:      "STARTED",
 		StartTime:      time.Now().Format("2006/01/02 15:04:05"),
 		StartTimestamp: time.Now().Unix(),
@@ -375,6 +377,39 @@ func (db *DBService) UpdateItem(ctx context.Context, key *string, result *Transf
 
 	if err != nil {
 		log.Printf("Failed to update item for %s in DynamoDB - %s\n", *key, err.Error())
+		// return nil
+	}
+	// item = &Item{}
+
+	// err = attributevalue.UnmarshalMap(output.Attributes, item)
+	// if err != nil {
+	// 	log.Printf("failed to unmarshal Dynamodb Scan Items, %v", err)
+	// }
+	return err
+}
+
+// UpdateSequencer is a function to update an item with new Sequencer in DynamoDB
+func (db *DBService) UpdateSequencer(ctx context.Context, key, sequencer *string) error {
+	// log.Printf("Update Sequencer for %s in DynamoDB\n", *key)
+
+	expr := "set Sequencer = :s"
+
+	input := &dynamodb.UpdateItemInput{
+		TableName: &db.tableName,
+		Key: map[string]dtype.AttributeValue{
+			"ObjectKey": &dtype.AttributeValueMemberS{Value: *key},
+		},
+		ExpressionAttributeValues: map[string]dtype.AttributeValue{
+			":s": &dtype.AttributeValueMemberS{Value: *sequencer},
+		},
+		ReturnValues:     "NONE",
+		UpdateExpression: &expr,
+	}
+
+	_, err := db.client.UpdateItem(ctx, input)
+
+	if err != nil {
+		log.Printf("Failed to update item for %s with Sequencer %s in DynamoDB - %s\n", *key, *sequencer, err.Error())
 		// return nil
 	}
 	// item = &Item{}
