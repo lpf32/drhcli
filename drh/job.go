@@ -94,8 +94,8 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
 	// TODO: Add logic when destination prefix is not empty
-	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
-	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
+	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
+	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, cfg.DestRegion, "Amazon_S3", desCred)
 
 	f = &Finder{
 		srcClient: srcClient,
@@ -255,8 +255,8 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
 	// TODO: Add logic when destination prefix is not empty
-	srcClient := NewS3Client(ctx, cfg.SrcBucketName, cfg.SrcBucketPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
-	desClient := NewS3Client(ctx, cfg.DestBucketName, cfg.DestBucketPrefix, cfg.DestRegion, cfg.SrcType, desCred)
+	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
+	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, cfg.DestRegion, "Amazon_S3", desCred)
 
 	return &Worker{
 		srcClient: srcClient,
@@ -376,7 +376,7 @@ func (w *Worker) processMessage(ctx context.Context, msg, rh *string) (obj *Obje
 // startMigration is a function to migrate an object from source to destination
 func (w *Worker) startMigration(ctx context.Context, obj *Object, rh *string, transferCh chan struct{}, processCh <-chan struct{}) {
 
-	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
+	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucket, obj.Key, w.cfg.DestBucket, obj.Key)
 
 	// Log in DynamoDB
 	w.db.PutItem(ctx, obj)
@@ -396,7 +396,7 @@ func (w *Worker) startMigration(ctx context.Context, obj *Object, rh *string, tr
 
 // startDelete is a function to delete an object from destination
 func (w *Worker) startDelete(ctx context.Context, obj *Object, rh *string, processCh <-chan struct{}) {
-	// log.Printf("Delete object from %s/%s\n", w.cfg.DestBucketName, obj.Key)
+	// log.Printf("Delete object from %s/%s\n", w.cfg.DestBucket, obj.Key)
 
 	// Currently, only Sequencer is updated with the latest one, no other info logged for delete action
 	// This might be changed in future for debug purpose
@@ -404,7 +404,7 @@ func (w *Worker) startDelete(ctx context.Context, obj *Object, rh *string, proce
 
 	err := w.desClient.DeleteObject(ctx, &obj.Key)
 	if err != nil {
-		log.Printf("Failed to delete object from %s/%s - %s\n", w.cfg.DestBucketName, obj.Key, err.Error())
+		log.Printf("Failed to delete object from %s/%s - %s\n", w.cfg.DestBucket, obj.Key, err.Error())
 	} else {
 		w.sqs.DeleteMessage(ctx, rh)
 		log.Printf("----->Deleted 1 object %s successfully\n", obj.Key)
@@ -584,7 +584,7 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, uploadID *string, st
 		chunkSize = obj.Size - start
 	}
 
-	log.Printf("----->Downloading %d Bytes from %s/%s\n", chunkSize, w.cfg.SrcBucketName, obj.Key)
+	log.Printf("----->Downloading %d Bytes from %s/%s\n", chunkSize, w.cfg.SrcBucket, obj.Key)
 
 	// TODO: Add metadata to GetObject result
 	body, err := w.srcClient.GetObject(ctx, &obj.Key, obj.Size, start, chunkSize, "null")
@@ -599,11 +599,11 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, uploadID *string, st
 	// Use PutObject for single object upload
 	// Use UploadPart for multipart upload
 	if uploadID != nil {
-		log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucketName, obj.Key, partNumber)
+		log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucket, obj.Key, partNumber)
 		etag, err = w.desClient.UploadPart(ctx, &obj.Key, uploadID, body, partNumber)
 
 	} else {
-		log.Printf("----->Uploading %d Bytes to %s/%s\n", chunkSize, w.cfg.DestBucketName, obj.Key)
+		log.Printf("----->Uploading %d Bytes to %s/%s\n", chunkSize, w.cfg.DestBucket, obj.Key)
 		etag, err = w.desClient.PutObject(ctx, &obj.Key, body, w.cfg.DestStorageClass)
 	}
 
@@ -614,7 +614,7 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, uploadID *string, st
 		}
 	}
 
-	log.Printf("----->Completed %d Bytes from %s/%s to %s/%s\n", chunkSize, w.cfg.SrcBucketName, obj.Key, w.cfg.DestBucketName, obj.Key)
+	log.Printf("----->Completed %d Bytes from %s/%s to %s/%s\n", chunkSize, w.cfg.SrcBucket, obj.Key, w.cfg.DestBucket, obj.Key)
 	return &TransferResult{
 		status: "DONE",
 		etag:   etag,

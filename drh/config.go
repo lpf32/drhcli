@@ -41,9 +41,9 @@ type JobOptions struct {
 
 // JobConfig is General Job Info
 type JobConfig struct {
-	SrcType, SrcBucketName, SrcBucketPrefix, SrcRegion, SrcCredential              string
-	DestBucketName, DestBucketPrefix, DestRegion, DestCredential, DestStorageClass string
-	JobTableName, JobQueueName                                                     string
-	SrcInCurrentAccount, DestInCurrentAccount                                      bool
+	SrcType, SrcBucket, SrcPrefix, SrcRegion, SrcCredential              string
+	DestBucket, DestPrefix, DestRegion, DestCredential, DestStorageClass string
+	JobTableName, JobQueueName                                           string
+	SrcInCurrentAccount, DestInCurrentAccount                            bool
 	*JobOptions
 }
