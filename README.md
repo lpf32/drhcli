@@ -69,10 +69,10 @@ An example of full config file can be found [here](./config-example.yaml)
 
 You must provide at least the minimum information as below:
 ```yaml
-srcBucketName: src-bucket
+srcBucket: src-bucket
 srcRegion: us-west-2
 
-destBucketName: dest-bucket
+destBucket: dest-bucket
 destRegion: cn-north-1
 
 jobTableName: test-table

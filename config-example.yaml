@@ -1,12 +1,12 @@
 srcType: Amazon_S3
-srcBucketName: src-bucket
-srcBucketPrefix:
+srcBucket: src-bucket
+srcPrefix:
 srcRegion: us-west-2
 srcCredential: src
 srcInCurrentAccount: false
 
-destBucketName: dest-bucket
-destBucketPrefix:
+destBucket: dest-bucket
+destPrefix:
 destRegion: cn-north-1
 destCredential:
 destStorageClass: STANDARD

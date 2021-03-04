@@ -72,9 +72,9 @@ func init() {
 func initConfig() {
 	viper.SetDefault("srcType", "Amazon_S3")
 	viper.SetDefault("destStorageClass", "STANDARD")
-	viper.SetDefault("srcBucketPrefix", "")
+	viper.SetDefault("srcPrefix", "")
 	viper.SetDefault("srcCredential", "")
-	viper.SetDefault("destBucketPrefix", "")
+	viper.SetDefault("destPrefix", "")
 	viper.SetDefault("destCredential", "")
 
 	viper.SetDefault("options.chunkSize", drh.DefaultChunkSize)
@@ -86,14 +86,14 @@ func initConfig() {
 	viper.SetDefault("options.workerNumber", drh.DefaultWorkerNumber)
 
 	viper.BindEnv("srcType", "SOURCE_TYPE")
-	viper.BindEnv("srcBucketName", "SRC_BUCKET_NAME")
-	viper.BindEnv("srcBucketPrefix", "SRC_BUCKET_PREFIX")
+	viper.BindEnv("srcBucket", "SRC_BUCKET")
+	viper.BindEnv("srcPrefix", "SRC_PREFIX")
 	viper.BindEnv("srcRegion", "SRC_REGION")
 	viper.BindEnv("srcCredential", "SRC_CREDENTIALS")
 	viper.BindEnv("SrcInCurrentAccount", "SRC_IN_CURRENT_ACCOUNT")
 
-	viper.BindEnv("destBucketName", "DEST_BUCKET_NAME")
-	viper.BindEnv("destBucketPrefix", "DEST_BUCKET_PREFIX")
+	viper.BindEnv("destBucket", "DEST_BUCKET")
+	viper.BindEnv("destPrefix", "DEST_PREFIX")
 	viper.BindEnv("destRegion", "DEST_REGION")
 	viper.BindEnv("destCredential", "DEST_CREDENTIALS")
 	viper.BindEnv("destInCurrentAccount", "DEST_IN_CURRENT_ACCOUNT")
@@ -139,13 +139,13 @@ func initConfig() {
 
 	cfg = &drh.JobConfig{
 		SrcType:              viper.GetString("srcType"),
-		SrcBucketName:        viper.GetString("srcBucketName"),
-		SrcBucketPrefix:      viper.GetString("srcBucketPrefix"),
+		SrcBucket:            viper.GetString("srcBucket"),
+		SrcPrefix:            viper.GetString("srcPrefix"),
 		SrcRegion:            viper.GetString("srcRegion"),
 		SrcCredential:        viper.GetString("srcCredential"),
 		SrcInCurrentAccount:  viper.GetBool("srcInCurrentAccount"),
-		DestBucketName:       viper.GetString("destBucketName"),
-		DestBucketPrefix:     viper.GetString("destBucketPrefix"),
+		DestBucket:           viper.GetString("destBucket"),
+		DestPrefix:           viper.GetString("destPrefix"),
 		DestRegion:           viper.GetString("destRegion"),
 		DestCredential:       viper.GetString("destCredential"),
 		DestStorageClass:     viper.GetString("destStorageClass"),
@@ -179,7 +179,7 @@ Supported types:
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		if cfg.SrcBucketName == "" || cfg.DestBucketName == "" {
+		if cfg.SrcBucket == "" || cfg.DestBucket == "" {
 			log.Fatalf("Cannot find source or destination bucket name, please check if you have run with a config file or environment variables. Run `drhcli help` for more details")
 		}
 
