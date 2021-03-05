@@ -316,6 +316,10 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 
 		obj, action := w.processMessage(ctx, msg, rh)
+		if obj == nil { // Empty message
+			continue
+		}
+
 		destKey := appendPrefix(&obj.Key, &w.cfg.DestPrefix)
 
 		if action == Transfer {
