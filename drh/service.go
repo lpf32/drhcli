@@ -18,10 +18,10 @@ import (
 
 // Item holds info about the items to be stored in DynamoDB
 type Item struct {
-	ObjectKey                          string
-	JobStatus, Etag, Sequencer         string
-	Size, StartTimestamp, EndTimestamp int64
-	StartTime, EndTime                 string
+	ObjectKey                                     string
+	JobStatus, Etag, Sequencer                    string
+	Size, StartTimestamp, EndTimestamp, SpentTime int64
+	StartTime, EndTime                            string
 	// ExtraInfo               Metadata
 }
 
@@ -133,7 +133,7 @@ func NewSqsService(ctx context.Context, queueName string) (*SqsService, error) {
 	}
 
 	queueURL := *result.QueueUrl
-	log.Println("Queue URL: " + queueURL)
+	// log.Println("Queue URL: " + queueURL)
 
 	SqsService := SqsService{
 		queueName: queueName,
@@ -283,12 +283,12 @@ func (ss *SqsService) IsQueueEmpty(ctx context.Context) (isEmpty bool) {
 		return
 	}
 
-	visible := output.Attributes["ApproximateNumberOfMessages"]
-	notVisible := output.Attributes["ApproximateNumberOfMessagesNotVisible"]
+	visible, _ := strconv.Atoi(output.Attributes["ApproximateNumberOfMessages"])
+	notVisible, _ := strconv.Atoi(output.Attributes["ApproximateNumberOfMessagesNotVisible"])
 
-	log.Printf("Queue %s has %s not visible message(s) and %s visable message(s)\n", ss.queueName, notVisible, visible)
+	log.Printf("Queue %s has %d not visible message(s) and %d visable message(s)\n", ss.queueName, notVisible, visible)
 
-	if visible == "0" && notVisible == "0" {
+	if visible+notVisible <= 1 {
 		isEmpty = true
 	}
 	return
@@ -356,7 +356,7 @@ func (db *DBService) UpdateItem(ctx context.Context, key *string, result *Transf
 		etag = *result.etag
 	}
 
-	expr := "set JobStatus = :s, Etag = :tg, EndTime = :et, EndTimestamp = :etm"
+	expr := "set JobStatus = :s, Etag = :tg, EndTime = :et, EndTimestamp = :etm, SpentTime = :etm - StartTimestamp"
 
 	input := &dynamodb.UpdateItemInput{
 		TableName: &db.tableName,

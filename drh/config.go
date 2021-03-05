@@ -1,11 +1,9 @@
 package drh
 
 const (
-	// MaxRetries when replication failed.
-	// MaxRetries int = 5
-
-	// MaxThreads is max
-	// MaxThreads int = 10
+	// MaxRetries when failed used globally
+	// No need an option of this.
+	MaxRetries int = 5
 
 	// DefaultMaxKeys is the maximum number of keys returned per listing request, default is 1000
 	DefaultMaxKeys int32 = 1000
@@ -23,7 +21,7 @@ const (
 	// DefaultMessageBatchSize the number of messages in a batch to send to SQS Queue
 	DefaultMessageBatchSize int = 10
 
-	// DefaultFinderDepth the depth of sub directory to start the finder process. 0 means only listing from current directory
+	// DefaultFinderDepth the depth of sub sub folders to compare in parallel. 0 means comparing all objects together with no parallelism.
 	DefaultFinderDepth int = 0
 
 	// DefaultFinderNumber is the number of finder threads to run in parallel

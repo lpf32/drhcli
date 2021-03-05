@@ -106,40 +106,78 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 	return
 }
 
-// List objects in source bucket
-func (f *Finder) getSourceObjects(ctx context.Context, token *string, prefix *string) []*Object {
-	// log.Printf("Getting source list with token %s", *token)
-	result, err := f.srcClient.ListObjects(ctx, token, prefix, f.cfg.MaxKeys)
-	if err != nil {
-		log.Printf("Fail to get source list - %s\n", err.Error())
-		// Log the last token and exit
-		log.Fatalf("The last token is %s\n", *token)
+// Run is main execution function for Finder.
+func (f *Finder) Run(ctx context.Context) {
+
+	if !f.sqs.IsQueueEmpty(ctx) {
+		log.Fatalf("Queue might not be empty or Unknown error... Please try again later")
 	}
-	return result
+
+	// Maximum number of queued messages to be sent to SQS
+	var bufferSize int = 5000
+
+	// Assume sending messages is slower than listing and comparing
+	// Create a channel to block the process not to generate too many messages to be sent.
+	msgCh := make(chan struct{}, bufferSize)
+
+	// Maximum number of finder threads in parallel
+	// Create a channel to block
+	// Note that bigger number needs more memory
+	compareCh := make(chan struct{}, f.cfg.FinderNumber)
+
+	prefixes := f.srcClient.ListCommonPrefixes(ctx, f.cfg.FinderDepth, f.cfg.MaxKeys)
+
+	var wg sync.WaitGroup
+
+	start := time.Now()
+
+	for _, p := range prefixes {
+		compareCh <- struct{}{}
+		wg.Add(1)
+		go f.compareAndSend(ctx, p, msgCh, compareCh, &wg)
+	}
+	wg.Wait()
+
+	end := time.Since(start)
+	log.Printf("Finder Job Completed in %v\n", end)
 }
+
+// List objects in source bucket
+// func (f *Finder) getSourceObjects(ctx context.Context, token *string, prefix *string) []*Object {
+// 	// log.Printf("Getting source list with token %s", *token)
+// 	result, err := f.srcClient.ListObjects(ctx, token, prefix, f.cfg.MaxKeys)
+// 	if err != nil {
+// 		log.Printf("Fail to get source list - %s\n", err.Error())
+// 		// Log the last token and exit
+// 		log.Printf("The last token is %s\n", *token)
+// 	}
+// 	return result
+// }
 
 // List objects in destination bucket, load the full list into a map
 func (f *Finder) getTargetObjects(ctx context.Context, prefix *string) (objects map[string]*int64) {
 
-	log.Printf("Getting target list in /%s\n", *prefix)
+	destPrefix := appendPrefix(prefix, &f.cfg.DestPrefix)
+	// log.Printf("Getting target list in destination prefix /%s\n", *destPrefix)
 
 	token := ""
 	objects = make(map[string]*int64)
 
 	for token != "End" {
-		jobs, err := f.desClient.ListObjects(ctx, &token, prefix, f.cfg.MaxKeys)
+		tar, err := f.desClient.ListObjects(ctx, &token, destPrefix, f.cfg.MaxKeys)
 		if err != nil {
 			log.Fatalf("Error listing objects in destination bucket - %s\n", err.Error())
 		}
 		// fmt.Printf("Size is %d\n", len(jobs))
 		// fmt.Printf("Token is %s\n", token)
 
-		for _, job := range jobs {
+		for _, obj := range tar {
 			// fmt.Printf("key is %s, size is %d\n", job.Key, job.Size)
-			objects[job.Key] = &job.Size
+			srcKey := removePrefix(&obj.Key, &f.cfg.DestPrefix)
+			objects[*srcKey] = &obj.Size
 		}
 	}
-	log.Printf("%d objects in /%s\n", len(objects), *prefix)
+	log.Printf("Totally %d objects in destination prefix /%s\n", len(objects), *destPrefix)
 	return
 }
 
@@ -148,18 +186,39 @@ func (f *Finder) getTargetObjects(ctx context.Context, prefix *string) (objects 
 func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan struct{}, compareCh chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	log.Printf("Comparing in /%s\n", *prefix)
+	log.Printf("Comparing in source prefix /%s\n", *prefix)
 	target := f.getTargetObjects(ctx, prefix)
 
 	token := ""
 	i, j := 0, 0
+	retry := 0
 	batch := make([]*string, f.cfg.MessageBatchSize)
 
+	log.Printf("Start comparing and sending...\n")
 	start := time.Now()
-	log.Printf("Start comparing source with target...\n")
 
 	for token != "End" {
-		source := f.getSourceObjects(ctx, &token, prefix)
+		// source := f.getSourceObjects(ctx, &token, prefix)
+		source, err := f.srcClient.ListObjects(ctx, &token, prefix, f.cfg.MaxKeys)
+		if err != nil {
+			log.Printf("Fail to get source list - %s\n", err.Error())
+			//
+			log.Printf("Sleep for 1 minute and try again...")
+			retry++
+
+			if retry <= MaxRetries {
+				time.Sleep(time.Minute * 1)
+				continue
+			} else {
+				log.Printf("Still unable to list source list after %d retries\n", MaxRetries)
+				// Log the last token and exit
+				log.Fatalf("The last token is %s\n", token)
+			}
+
+		}
+
+		// if a successful list, reset to 0
+		retry = 0
 
 		for _, obj := range source {
 			// TODO: Check if there is another way to compare
@@ -199,44 +258,8 @@ func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan 
 	}
 
 	end := time.Since(start)
-	log.Printf("Sent %d batches in %v seconds", j, end)
+	log.Printf("Compared and Sent %d batches in %v", j, end)
 	<-compareCh
-}
-
-// Run is main execution function for Finder.
-func (f *Finder) Run(ctx context.Context) {
-
-	if !f.sqs.IsQueueEmpty(ctx) {
-		log.Fatalf("Queue might not be empty or Unknown error... Please try again later")
-	}
-
-	// Maximum number of queued messages to be sent to SQS
-	var bufferSize int = 10000
-
-	// Assume sending messages is slower than listing and comparing
-	// Create a channel to block the process not to generate too many messages to be sent.
-	msgCh := make(chan struct{}, bufferSize)
-
-	// Maximum number of finder threads in parallel
-	// Create a channel to block
-	// Note that bigger number needs more memory
-	compareCh := make(chan struct{}, f.cfg.FinderNumber)
-
-	prefixes := f.srcClient.ListCommonPrefixes(ctx, f.cfg.FinderDepth, f.cfg.MaxKeys)
-
-	var wg sync.WaitGroup
-
-	start := time.Now()
-
-	for _, p := range prefixes {
-		compareCh <- struct{}{}
-		wg.Add(1)
-		go f.compareAndSend(ctx, p, msgCh, compareCh, &wg)
-	}
-	wg.Wait()
-
-	end := time.Since(start)
-	log.Printf("Finder Job Completed in %v seconds\n", end)
 }
 
 // NewWorker creates a new Worker instance
@@ -293,13 +316,15 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 
 		obj, action := w.processMessage(ctx, msg, rh)
+		destKey := appendPrefix(&obj.Key, &w.cfg.DestPrefix)
+
 		if action == Transfer {
 			processCh <- struct{}{}
-			go w.startMigration(ctx, obj, rh, transferCh, processCh)
+			go w.startMigration(ctx, obj, rh, destKey, transferCh, processCh)
 		}
 		if action == Delete {
 			processCh <- struct{}{}
-			go w.startDelete(ctx, obj, rh, processCh)
+			go w.startDelete(ctx, obj, rh, destKey, processCh)
 		}
 	}
 }
@@ -374,18 +399,18 @@ func (w *Worker) processMessage(ctx context.Context, msg, rh *string) (obj *Obje
 }
 
 // startMigration is a function to migrate an object from source to destination
-func (w *Worker) startMigration(ctx context.Context, obj *Object, rh *string, transferCh chan struct{}, processCh <-chan struct{}) {
+func (w *Worker) startMigration(ctx context.Context, obj *Object, rh, destKey *string, transferCh chan struct{}, processCh <-chan struct{}) {
 
-	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucket, obj.Key, w.cfg.DestBucket, obj.Key)
+	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucket, obj.Key, w.cfg.DestBucket, *destKey)
 
 	// Log in DynamoDB
 	w.db.PutItem(ctx, obj)
 
 	var res *TransferResult
 	if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
-		res = w.migrateSmallFile(ctx, obj, transferCh)
+		res = w.migrateSmallFile(ctx, obj, destKey, transferCh)
 	} else {
-		res = w.migrateBigFile(ctx, obj, transferCh)
+		res = w.migrateBigFile(ctx, obj, destKey, transferCh)
 	}
 
 	w.processResult(ctx, obj, rh, res)
@@ -395,19 +420,19 @@ func (w *Worker) startMigration(ctx context.Context, obj *Object, rh *string, tr
 }
 
 // startDelete is a function to delete an object from destination
-func (w *Worker) startDelete(ctx context.Context, obj *Object, rh *string, processCh <-chan struct{}) {
+func (w *Worker) startDelete(ctx context.Context, obj *Object, rh, destKey *string, processCh <-chan struct{}) {
 	// log.Printf("Delete object from %s/%s\n", w.cfg.DestBucket, obj.Key)
 
 	// Currently, only Sequencer is updated with the latest one, no other info logged for delete action
 	// This might be changed in future for debug purpose
 	w.db.UpdateSequencer(ctx, &obj.Key, &obj.Sequencer)
 
-	err := w.desClient.DeleteObject(ctx, &obj.Key)
+	err := w.desClient.DeleteObject(ctx, destKey)
 	if err != nil {
-		log.Printf("Failed to delete object from %s/%s - %s\n", w.cfg.DestBucket, obj.Key, err.Error())
+		log.Printf("Failed to delete object from %s/%s - %s\n", w.cfg.DestBucket, *destKey, err.Error())
 	} else {
 		w.sqs.DeleteMessage(ctx, rh)
-		log.Printf("----->Deleted 1 object %s successfully\n", obj.Key)
+		log.Printf("----->Deleted 1 object %s successfully\n", *destKey)
 	}
 	<-processCh
 
@@ -427,12 +452,12 @@ func (w *Worker) processResult(ctx context.Context, obj *Object, rh *string, res
 
 // Internal func to deal with the transferring of small file.
 // Simply transfer the whole object
-func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh chan struct{}) *TransferResult {
+func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, destKey *string, transferCh chan struct{}) *TransferResult {
 
 	// Add a transferring record
 	transferCh <- struct{}{}
 
-	result := w.transfer(ctx, obj, nil, 0, obj.Size, 0)
+	result := w.transfer(ctx, obj, destKey, 0, obj.Size, nil, 0)
 	// log.Printf("Completed the transfer of %s with etag %s\n", obj.Key, *result.etag)
 
 	// Remove the transferring record  after transfer is completed
@@ -445,25 +470,25 @@ func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, transferCh c
 // Internal func to deal with the transferring of large file.
 // First need to create/get an uploadID, then use UploadID to upload each parts
 // Finally, need to combine all parts into a single file.
-func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, transferCh chan struct{}) *TransferResult {
+func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, destKey *string, transferCh chan struct{}) *TransferResult {
 
 	var err error
 	var parts map[int]*Part
 
-	uploadID := w.desClient.GetUploadID(ctx, &obj.Key)
+	uploadID := w.desClient.GetUploadID(ctx, destKey)
 
 	// If uploadID Found, use list parts to get all existing parts.
 	// Else Create a new upload ID
 	if uploadID != nil {
 		// log.Printf("Found upload ID %s", *uploadID)
-		parts = w.desClient.ListParts(ctx, &obj.Key, uploadID)
+		parts = w.desClient.ListParts(ctx, destKey, uploadID)
 
 	} else {
 		// TODO: Get metadata first by HeadObject
 		// Add metadata to CreateMultipartUpload func.
-		uploadID, err = w.desClient.CreateMultipartUpload(ctx, &obj.Key)
+		uploadID, err = w.desClient.CreateMultipartUpload(ctx, destKey, &w.cfg.DestStorageClass)
 		if err != nil {
-			log.Printf("Failed to create upload ID - %s for %s\n", err.Error(), obj.Key)
+			log.Printf("Failed to create upload ID - %s for %s\n", err.Error(), *destKey)
 			return &TransferResult{
 				status: "ERROR",
 				err:    err,
@@ -471,7 +496,7 @@ func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, transferCh cha
 		}
 	}
 
-	allParts, err := w.startMultipartUpload(ctx, obj, uploadID, parts, transferCh)
+	allParts, err := w.startMultipartUpload(ctx, obj, destKey, uploadID, parts, transferCh)
 	if err != nil {
 		return &TransferResult{
 			status: "ERROR",
@@ -479,10 +504,10 @@ func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, transferCh cha
 		}
 	}
 
-	etag, err := w.desClient.CompleteMultipartUpload(ctx, &obj.Key, uploadID, allParts)
+	etag, err := w.desClient.CompleteMultipartUpload(ctx, destKey, uploadID, allParts)
 	if err != nil {
 		log.Printf("Failed to complete upload for %s - %s\n", obj.Key, err.Error())
-		w.desClient.AbortMultipartUpload(ctx, &obj.Key, uploadID)
+		w.desClient.AbortMultipartUpload(ctx, destKey, uploadID)
 		return &TransferResult{
 			status: "ERROR",
 			err:    err,
@@ -514,7 +539,7 @@ func (w *Worker) getTotalParts(size int64) (totalParts, chunkSize int) {
 }
 
 // A func to perform multipart upload
-func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, uploadID *string, parts map[int](*Part), transferCh chan struct{}) ([]*Part, error) {
+func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, destKey, uploadID *string, parts map[int](*Part), transferCh chan struct{}) ([]*Part, error) {
 
 	totalParts, chunkSize := w.getTotalParts(obj.Size)
 	// log.Printf("Total parts are %d for %s\n", totalParts, obj.Key)
@@ -538,7 +563,7 @@ func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, uploadID
 
 			go func(i int) {
 				defer wg.Done()
-				result := w.transfer(ctx, obj, uploadID, int64(i*chunkSize), int64(chunkSize), partNumber)
+				result := w.transfer(ctx, obj, destKey, int64(i*chunkSize), int64(chunkSize), uploadID, partNumber)
 
 				if result.err != nil {
 					partErrorCh <- result.err
@@ -576,7 +601,7 @@ func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, uploadID
 }
 
 // transfer is a process to download data from source and upload to destination
-func (w *Worker) transfer(ctx context.Context, obj *Object, uploadID *string, start, chunkSize int64, partNumber int) (result *TransferResult) {
+func (w *Worker) transfer(ctx context.Context, obj *Object, destKey *string, start, chunkSize int64, uploadID *string, partNumber int) (result *TransferResult) {
 	var etag *string
 	var err error
 
@@ -596,15 +621,16 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, uploadID *string, st
 		}
 	}
 
+	// destKey := appendPrefix(&obj.Key, &w.cfg.DestPrefix)
 	// Use PutObject for single object upload
 	// Use UploadPart for multipart upload
 	if uploadID != nil {
-		log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucket, obj.Key, partNumber)
-		etag, err = w.desClient.UploadPart(ctx, &obj.Key, uploadID, body, partNumber)
+		log.Printf("----->Uploading %d Bytes to %s/%s - Part %d\n", chunkSize, w.cfg.DestBucket, *destKey, partNumber)
+		etag, err = w.desClient.UploadPart(ctx, destKey, body, uploadID, partNumber)
 
 	} else {
-		log.Printf("----->Uploading %d Bytes to %s/%s\n", chunkSize, w.cfg.DestBucket, obj.Key)
-		etag, err = w.desClient.PutObject(ctx, &obj.Key, body, w.cfg.DestStorageClass)
+		log.Printf("----->Uploading %d Bytes to %s/%s\n", chunkSize, w.cfg.DestBucket, *destKey)
+		etag, err = w.desClient.PutObject(ctx, destKey, body, &w.cfg.DestStorageClass)
 	}
 
 	if err != nil {
@@ -614,7 +640,7 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, uploadID *string, st
 		}
 	}
 
-	log.Printf("----->Completed %d Bytes from %s/%s to %s/%s\n", chunkSize, w.cfg.SrcBucket, obj.Key, w.cfg.DestBucket, obj.Key)
+	log.Printf("----->Completed %d Bytes from %s/%s to %s/%s\n", chunkSize, w.cfg.SrcBucket, obj.Key, w.cfg.DestBucket, *destKey)
 	return &TransferResult{
 		status: "DONE",
 		etag:   etag,
