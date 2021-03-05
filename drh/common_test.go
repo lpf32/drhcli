@@ -235,3 +235,75 @@ func TestEscape(t *testing.T) {
 		})
 	}
 }
+
+func TestRemovePrefix(t *testing.T) {
+	type args struct {
+		key    string
+		prefix string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "Test normal prefix",
+			args: args{
+				key:    "foo/bar.png",
+				prefix: "foo",
+			},
+			want: "bar.png",
+		},
+		{
+			name: "Test empty prefix",
+			args: args{
+				key:    "foo/bar.png",
+				prefix: "",
+			},
+			want: "foo/bar.png",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := removePrefix(&tt.args.key, &tt.args.prefix); *got != tt.want {
+				t.Errorf("removePrefix() = %v, want %v", *got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppendPrefix(t *testing.T) {
+	type args struct {
+		key    string
+		prefix string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "Test normal prefix",
+			args: args{
+				key:    "bar.png",
+				prefix: "foo",
+			},
+			want: "foo/bar.png",
+		},
+		{
+			name: "Test empty prefix",
+			args: args{
+				key:    "foo/bar.png",
+				prefix: "",
+			},
+			want: "foo/bar.png",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := appendPrefix(&tt.args.key, &tt.args.prefix); *got != tt.want {
+				t.Errorf("appendPrefix() = %v, want %v", *got, tt.want)
+			}
+		})
+	}
+}

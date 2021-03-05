@@ -21,7 +21,7 @@ Below features are planed in the first offical release
 - [x] Support Mulipart uploads when upload ID already exists
 - [ ] Support Other cloud storage service
 - [ ] Implement heart beat for large file transfer (extend message visibility timeout)
-- [ ] Add logic when destination prefix is not empty
+- [x] Add logic when destination prefix is not empty
 - [x] Create docker image
 - [ ] Create Unit Test cases
 

@@ -2,9 +2,11 @@ package drh
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -105,4 +107,20 @@ func unescape(str *string) string {
 
 func escape(str *string) string {
 	return url.QueryEscape(*str)
+}
+
+func removePrefix(key, prefix *string) *string {
+	if prefix == nil || *prefix == "" {
+		return key
+	}
+	newkey := strings.Replace(*key, *prefix+"/", "", 1)
+	return &newkey
+}
+
+func appendPrefix(key, prefix *string) *string {
+	if prefix == nil || *prefix == "" {
+		return key
+	}
+	newkey := fmt.Sprintf("%s/%s", *prefix, *key)
+	return &newkey
 }

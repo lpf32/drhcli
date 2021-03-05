@@ -29,10 +29,10 @@ type Client interface {
 	GetUploadID(ctx context.Context, key *string) (uploadID *string)
 
 	// WRITE
-	PutObject(ctx context.Context, key *string, body []byte, storageClass string) (etag *string, err error)
-	CreateMultipartUpload(ctx context.Context, key *string) (uploadID *string, err error)
+	PutObject(ctx context.Context, key *string, body []byte, storageClass *string) (etag *string, err error)
+	CreateMultipartUpload(ctx context.Context, key, storageClass *string) (uploadID *string, err error)
 	CompleteMultipartUpload(ctx context.Context, key, uploadID *string, parts []*Part) (etag *string, err error)
-	UploadPart(ctx context.Context, key, uploadID *string, body []byte, partNumber int) (etag *string, err error)
+	UploadPart(ctx context.Context, key *string, body []byte, uploadID *string, partNumber int) (etag *string, err error)
 	AbortMultipartUpload(ctx context.Context, key, uploadID *string) (err error)
 	DeleteObject(ctx context.Context, key *string) (err error)
 }
@@ -228,7 +228,7 @@ func (c *S3Client) listPrefixFn(ctx context.Context, depth int, prefix *string, 
 
 // ListCommonPrefixes is a function to list common prefixes.
 func (c *S3Client) ListCommonPrefixes(ctx context.Context, depth int, maxKeys int32) (prefixes []*string) {
-	log.Printf("List Prefixes /%s with depths %d\n", c.prefix, depth)
+	log.Printf("List common prefixes from /%s with depths %d\n", c.prefix, depth)
 	var wg sync.WaitGroup
 
 	if depth == 0 {
@@ -296,7 +296,7 @@ func (c *S3Client) HeadObject(ctx context.Context, key *string) {
 }
 
 // PutObject is a function to put (upload) an object to Amazon S3
-func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, storageClass string) (etag *string, err error) {
+func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, storageClass *string) (etag *string, err error) {
 	// log.Printf("S3> Uploading object %s to bucket %s\n", key, c.bucket)
 
 	md5Bytes := md5.Sum(body)
@@ -308,11 +308,11 @@ func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, stor
 	reader := bytes.NewReader(body)
 
 	input := &s3.PutObjectInput{
-		Bucket:     &c.bucket,
-		Key:        key,
-		Body:       reader,
-		ContentMD5: &contentMD5,
-		// StorageClass: types.StorageClass(storageClass),
+		Bucket:       &c.bucket,
+		Key:          key,
+		Body:         reader,
+		ContentMD5:   &contentMD5,
+		StorageClass: types.StorageClass(*storageClass),
 	}
 
 	output, err := c.client.PutObject(ctx, input)
@@ -345,8 +345,31 @@ func (c *S3Client) DeleteObject(ctx context.Context, key *string) (err error) {
 	return nil
 }
 
+// CreateMultipartUpload is a function to initilize a multipart upload process.
+// This func returns an upload ID used to indicate the multipart upload.
+// All parts will be uploaded with this upload ID, after that, all parts by this ID will be combined to create the full object.
+func (c *S3Client) CreateMultipartUpload(ctx context.Context, key, storageClass *string) (uploadID *string, err error) {
+	// log.Printf("S3> Create Multipart Upload for %s\n", *key)
+
+	input := &s3.CreateMultipartUploadInput{
+		Bucket:       &c.bucket,
+		Key:          key,
+		StorageClass: types.StorageClass(*storageClass),
+		// metadata: "s",
+	}
+
+	output, err := c.client.CreateMultipartUpload(ctx, input)
+	if err != nil {
+		log.Printf("S3> Unable to create multipart upload for %s - %s\n", *key, err.Error())
+	} else {
+		uploadID = output.UploadId
+		// log.Printf("S3> Create Multipart Upload for %s - upload id is %s\n", key, *output.UploadId)
+	}
+	return
+}
+
 // UploadPart is
-func (c *S3Client) UploadPart(ctx context.Context, key, uploadID *string, body []byte, partNumber int) (etag *string, err error) {
+func (c *S3Client) UploadPart(ctx context.Context, key *string, body []byte, uploadID *string, partNumber int) (etag *string, err error) {
 	// log.Printf("S3> Uploading part for %s with part number %d", key, partNumber)
 
 	md5Bytes := md5.Sum(body)
@@ -379,7 +402,7 @@ func (c *S3Client) UploadPart(ctx context.Context, key, uploadID *string, body [
 	return
 }
 
-// CompleteMultipartUpload is
+// CompleteMultipartUpload is a function to combine all parts uploaded and create the full object.
 func (c *S3Client) CompleteMultipartUpload(ctx context.Context, key, uploadID *string, parts []*Part) (etag *string, err error) {
 	// log.Printf("S3> Complete Multipart Uploads for %s\n", key)
 
@@ -416,27 +439,6 @@ func (c *S3Client) CompleteMultipartUpload(ctx context.Context, key, uploadID *s
 
 	return
 
-}
-
-// CreateMultipartUpload is
-func (c *S3Client) CreateMultipartUpload(ctx context.Context, key *string) (uploadID *string, err error) {
-	// log.Printf("S3> Create Multipart Upload for %s\n", *key)
-
-	input := &s3.CreateMultipartUploadInput{
-		Bucket: &c.bucket,
-		Key:    key,
-		// StorageClass: "s",
-		// metadata: "s",
-	}
-
-	output, err := c.client.CreateMultipartUpload(ctx, input)
-	if err != nil {
-		log.Printf("S3> Unable to create multipart upload for %s - %s\n", *key, err.Error())
-	} else {
-		uploadID = output.UploadId
-		// log.Printf("S3> Create Multipart Upload for %s - upload id is %s\n", key, *output.UploadId)
-	}
-	return
 }
 
 // ListParts returns list of parts by upload ID in a map
