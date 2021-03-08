@@ -249,22 +249,23 @@ func (ss *SqsService) DeleteMessage(ctx context.Context, rh *string) (ok bool) {
 }
 
 // ChangeVisibilityTimeout function is used to change the Visibility Timeout of a message
-// func (ss *SqsService) ChangeVisibilityTimeout(rh *string, seconds int32) (ok bool) {
-// 	input := &sqs.ChangeMessageVisibilityInput{
-// 		QueueUrl:          &ss.queueURL,
-// 		ReceiptHandle:     rh,
-// 		VisibilityTimeout: seconds,
-// 	}
-// 	_, err := ss.client.ChangeMessageVisibility(ss.ctx, input)
+func (ss *SqsService) ChangeVisibilityTimeout(ctx context.Context, rh *string, seconds int32) (ok bool) {
 
-// 	if err != nil {
-// 		log.Printf("Unable to Change Visibility Timeout - %s", err.Error())
-// 		return false
-// 	}
+	input := &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          &ss.queueURL,
+		ReceiptHandle:     rh,
+		VisibilityTimeout: seconds,
+	}
+	_, err := ss.client.ChangeMessageVisibility(ctx, input)
 
-// 	// log.Printf(output)
-// 	return true
-// }
+	if err != nil {
+		log.Printf("Unable to Change Visibility Timeout - %s", err.Error())
+		return false
+	}
+
+	// log.Printf(output)
+	return true
+}
 
 // IsQueueEmpty is a function to check if the Queue is empty or not
 func (ss *SqsService) IsQueueEmpty(ctx context.Context) (isEmpty bool) {

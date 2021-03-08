@@ -184,7 +184,7 @@ Supported types:
 		}
 
 		log.Printf("Start running %s job", jobType)
-		ctx := context.TODO()
+		ctx := context.Background()
 
 		var job drh.Job
 
