@@ -292,15 +292,23 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 
 // Run a Worker job
 func (w *Worker) Run(ctx context.Context) {
-	// log.Println("Start migration...")
+	// log.Println("Start Worker Job...")
+
+	buffer := w.cfg.WorkerNumber
+	if buffer <= 0 {
+		buffer = 1 // Minimum 1
+	}
+	if buffer > 100 {
+		buffer = 100 // Maximum 100
+	}
 
 	// A channel to block number of messages to be processed
 	// Buffer size is cfg.WorkerNumber
-	processCh := make(chan struct{}, w.cfg.WorkerNumber)
+	processCh := make(chan struct{}, buffer)
 
 	// Channel to block number of objects/parts to be processed.
 	// Buffer size is cfg.WorkerNumber * 2 - 1 (More buffer for multipart upload)
-	transferCh := make(chan struct{}, w.cfg.WorkerNumber*2-1)
+	transferCh := make(chan struct{}, buffer*2-1)
 
 	// Channel to store transfer result
 	// Buffer size is same as transfer Channel
@@ -405,10 +413,15 @@ func (w *Worker) processMessage(ctx context.Context, msg, rh *string) (obj *Obje
 // startMigration is a function to migrate an object from source to destination
 func (w *Worker) startMigration(ctx context.Context, obj *Object, rh, destKey *string, transferCh chan struct{}, processCh <-chan struct{}) {
 
+	ctx1, cancelHB := context.WithCancel(ctx)
+
 	log.Printf("Migrating from %s/%s to %s/%s\n", w.cfg.SrcBucket, obj.Key, w.cfg.DestBucket, *destKey)
 
 	// Log in DynamoDB
 	w.db.PutItem(ctx, obj)
+
+	// Start a heart beat
+	go w.heartBeat(ctx1, &obj.Key, rh)
 
 	var res *TransferResult
 	if obj.Size <= int64(w.cfg.MultipartThreshold*MB) {
@@ -418,6 +431,9 @@ func (w *Worker) startMigration(ctx context.Context, obj *Object, rh, destKey *s
 	}
 
 	w.processResult(ctx, obj, rh, res)
+
+	// Cancel heart beat once done.
+	cancelHB()
 
 	<-processCh
 
@@ -468,6 +484,39 @@ func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, destKey *str
 	<-transferCh
 
 	return result
+
+}
+
+// heartBeat is to extend the visibility timeout before timeout happends
+// Default timeout is
+func (w *Worker) heartBeat(ctx context.Context, key, rh *string) {
+	timeout := 15 // Default time out is 15 minutes
+
+	// log.Printf("Heart Beat %d for %s", 1, *key)
+	interval := 60
+	i := 1
+
+	time.Sleep(time.Second * 50) // 10 seconds ahead, buffer for api call
+
+	for {
+		select {
+		case <-ctx.Done():
+			// log.Printf("Received Cancel of heart beat for %s", *key)
+			return
+		default:
+
+			i++
+			// log.Printf("Heart Beat %d for %s", i, *key)
+			if i%timeout == 0 {
+				sec := int32((i + timeout) * interval)
+				log.Printf("Change timeout for %s to %d seconds", *key, sec)
+				w.sqs.ChangeVisibilityTimeout(ctx, rh, sec)
+			}
+
+			time.Sleep(time.Second * time.Duration(interval))
+		}
+
+	}
 
 }
 
