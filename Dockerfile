@@ -9,13 +9,13 @@ COPY . .
 RUN GOPROXY=https://goproxy.io,direct GOOS=linux go build -o drhcli .
 
 FROM alpine:latest
-RUN apk update
+RUN apk update \
+    && apk upgrade
 
 ENV SOURCE_TYPE Amazon_S3
 
 ENV JOB_TABLE_NAME ''
 ENV JOB_QUEUE_NAME ''
-
 
 ENV SRC_BUCKET ''
 ENV SRC_PREFIX ''
@@ -28,7 +28,6 @@ ENV DEST_PREFIX ''
 ENV DEST_REGION ''
 ENV DEST_CREDENTIALS ''
 ENV DEST_IN_CURRENT_ACCOUNT false
-
 
 ENV MAX_KEYS 1000
 ENV CHUNK_SIZE 5
