@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -118,7 +119,10 @@ func (f *Finder) Run(ctx context.Context) {
 
 	// Assume sending messages is slower than listing and comparing
 	// Create a channel to block the process not to generate too many messages to be sent.
-	msgCh := make(chan struct{}, bufferSize)
+	batchCh := make(chan struct{}, bufferSize)
+
+	// Channel to buffer the messages
+	msgCh := make(chan *string, bufferSize*f.cfg.MessageBatchSize)
 
 	// Maximum number of finder threads in parallel
 	// Create a channel to block
@@ -134,9 +138,13 @@ func (f *Finder) Run(ctx context.Context) {
 	for _, p := range prefixes {
 		compareCh <- struct{}{}
 		wg.Add(1)
-		go f.compareAndSend(ctx, p, msgCh, compareCh, &wg)
+		go f.compareAndSend(ctx, p, batchCh, msgCh, compareCh, &wg)
 	}
 	wg.Wait()
+
+	close(batchCh)
+	close(msgCh)
+	close(compareCh)
 
 	end := time.Since(start)
 	log.Printf("Finder Job Completed in %v\n", end)
@@ -183,7 +191,7 @@ func (f *Finder) getTargetObjects(ctx context.Context, prefix *string) (objects 
 
 // This function will compare source and target and get a list of delta,
 // and then send delta to SQS Queue.
-func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan struct{}, compareCh chan struct{}, wg *sync.WaitGroup) {
+func (f *Finder) compareAndSend(ctx context.Context, prefix *string, batchCh chan struct{}, msgCh chan *string, compareCh chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	log.Printf("Comparing in source prefix /%s\n", *prefix)
@@ -192,10 +200,10 @@ func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan 
 	token := ""
 	i, j := 0, 0
 	retry := 0
-	batch := make([]*string, f.cfg.MessageBatchSize)
+	// batch := make([]*string, f.cfg.MessageBatchSize)
 
 	log.Printf("Start comparing and sending...\n")
-	start := time.Now()
+	// start := time.Now()
 
 	for token != "End" {
 		// source := f.getSourceObjects(ctx, &token, prefix)
@@ -225,7 +233,8 @@ func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan 
 			// Currently, map is used to search if such object exists in target
 			if tsize, found := target[obj.Key]; !found || *tsize != obj.Size {
 				// log.Printf("Find a difference %s - %d\n", key, size)
-				batch[i] = obj.toString()
+				// batch[i] = obj.toString()
+				msgCh <- obj.toString()
 				i++
 				if i%f.cfg.MessageBatchSize == 0 {
 					wg.Add(1)
@@ -233,14 +242,20 @@ func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan 
 					if j%100 == 0 {
 						log.Printf("Found %d batches in prefix /%s\n", j, *prefix)
 					}
-					msgCh <- struct{}{}
-					i = 0
+					batchCh <- struct{}{}
 
-					go func(batch []*string) {
+					// start a go routine to send messages in batch
+					go func(i int) {
 						defer wg.Done()
+						batch := make([]*string, i)
+						for a := 0; a < i; a++ {
+							batch[a] = <-msgCh
+						}
+
 						f.sqs.SendMessageInBatch(ctx, batch)
-						<-msgCh
-					}(batch)
+						<-batchCh
+					}(f.cfg.MessageBatchSize)
+					i = 0
 				}
 			}
 		}
@@ -249,16 +264,22 @@ func (f *Finder) compareAndSend(ctx context.Context, prefix *string, msgCh chan 
 	if i != 0 {
 		j++
 		wg.Add(1)
-		msgCh <- struct{}{}
-		go func(batch []*string) {
+		batchCh <- struct{}{}
+		go func(i int) {
 			defer wg.Done()
-			f.sqs.SendMessageInBatch(ctx, batch[:i])
-			<-msgCh
-		}(batch)
+			batch := make([]*string, i)
+			for a := 0; a < i; a++ {
+				batch[a] = <-msgCh
+			}
+
+			f.sqs.SendMessageInBatch(ctx, batch)
+			<-batchCh
+		}(i)
 	}
 
-	end := time.Since(start)
-	log.Printf("Compared and Sent %d batches in %v", j, end)
+	// end := time.Since(start)
+	// log.Printf("Compared and Sent %d batches in %v", j, end)
+	log.Printf("Completed in prefix /%s, found %d batches in total", *prefix, j)
 	<-compareCh
 }
 
@@ -582,7 +603,7 @@ func (w *Worker) getTotalParts(size int64) (totalParts, chunkSize int) {
 	maxParts := 10000
 
 	chunkSize = w.cfg.ChunkSize * MB
-	totalParts = int(size/int64(chunkSize)) + 1
+	totalParts = int(math.Ceil(float64(size) / float64(chunkSize)))
 
 	if totalParts > maxParts {
 		totalParts = maxParts
