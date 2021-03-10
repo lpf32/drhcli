@@ -134,7 +134,9 @@ func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string,
 // GetObject is a function to get (download) object from Amazon S3
 func (c *S3Client) GetObject(ctx context.Context, key *string, size, start, chunkSize int64, version string) ([]byte, error) {
 	// log.Printf("S3> Downloading %s with %d bytes start from %d\n", key, size, start)
-
+	if size == 0 { // for prefix
+		return nil, nil
+	}
 	bodyRange := fmt.Sprintf("bytes=%d-%d", start, start+chunkSize-1)
 	input := &s3.GetObjectInput{
 		Bucket: &c.bucket,
@@ -209,20 +211,22 @@ func (c *S3Client) listPrefixFn(ctx context.Context, depth int, prefix *string, 
 	continuationToken := ""
 	delimiter := "/"
 
+	i := 0
+
 	for continuationToken != "End" {
 		output, _ := c.listObjectFn(ctx, &continuationToken, prefix, &delimiter, maxKeys)
 
-		log.Printf("Getting %d prefixes in /%s\n", len(output.CommonPrefixes), *prefix)
+		// log.Printf("Getting %d prefixes in /%s\n", len(output.CommonPrefixes), *prefix)
 
-		if len(output.CommonPrefixes) == 0 {
-			levelCh <- prefix
-		} else {
-			for _, cp := range output.CommonPrefixes {
-				wg.Add(1)
-				go c.listPrefixFn(ctx, depth-1, cp.Prefix, maxKeys, levelCh, wg)
-			}
+		for _, cp := range output.CommonPrefixes {
+			i++
+			wg.Add(1)
+			go c.listPrefixFn(ctx, depth-1, cp.Prefix, maxKeys, levelCh, wg)
 		}
 
+	}
+	if i == 0 {
+		levelCh <- prefix
 	}
 }
 
@@ -236,7 +240,8 @@ func (c *S3Client) ListCommonPrefixes(ctx context.Context, depth int, maxKeys in
 		return
 	}
 
-	levelCh := make(chan *string, 10)
+	// Maximum around 100K
+	levelCh := make(chan *string, 1<<17)
 	wg.Add(1)
 	go c.listPrefixFn(ctx, depth, &c.prefix, maxKeys, levelCh, &wg)
 	wg.Wait()
@@ -266,7 +271,7 @@ func (c *S3Client) ListObjects(ctx context.Context, continuationToken, prefix *s
 	result := make([]*Object, len, len)
 
 	for i, obj := range output.Contents {
-		// log.Printf("key=%s size=%d", aws.ToString(obj.Key), obj.Size)
+		// log.Printf("key=%s size=%d", *obj.Key, obj.Size)
 		result[i] = &Object{
 			Key:  *obj.Key,
 			Size: obj.Size,
