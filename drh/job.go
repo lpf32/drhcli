@@ -3,11 +3,14 @@ package drh
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"math"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 const (
@@ -94,7 +97,6 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
-	// TODO: Add logic when destination prefix is not empty
 	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, cfg.DestRegion, "Amazon_S3", desCred)
 
@@ -115,7 +117,7 @@ func (f *Finder) Run(ctx context.Context) {
 	}
 
 	// Maximum number of queued messages to be sent to SQS
-	var bufferSize int = 5000
+	var bufferSize int = 3000
 
 	// Assume sending messages is slower than listing and comparing
 	// Create a channel to block the process not to generate too many messages to be sent.
@@ -149,18 +151,6 @@ func (f *Finder) Run(ctx context.Context) {
 	end := time.Since(start)
 	log.Printf("Finder Job Completed in %v\n", end)
 }
-
-// List objects in source bucket
-// func (f *Finder) getSourceObjects(ctx context.Context, token *string, prefix *string) []*Object {
-// 	// log.Printf("Getting source list with token %s", *token)
-// 	result, err := f.srcClient.ListObjects(ctx, token, prefix, f.cfg.MaxKeys)
-// 	if err != nil {
-// 		log.Printf("Fail to get source list - %s\n", err.Error())
-// 		// Log the last token and exit
-// 		log.Printf("The last token is %s\n", *token)
-// 	}
-// 	return result
-// }
 
 // List objects in destination bucket, load the full list into a map
 func (f *Finder) getTargetObjects(ctx context.Context, prefix *string) (objects map[string]*int64) {
@@ -298,7 +288,6 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
-	// TODO: Add logic when destination prefix is not empty
 	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
 	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, cfg.DestRegion, "Amazon_S3", desCred)
 
@@ -330,10 +319,6 @@ func (w *Worker) Run(ctx context.Context) {
 	// Channel to block number of objects/parts to be processed.
 	// Buffer size is cfg.WorkerNumber * 2 - 1 (More buffer for multipart upload)
 	transferCh := make(chan struct{}, buffer*2-1)
-
-	// Channel to store transfer result
-	// Buffer size is same as transfer Channel
-	// resultCh := make(chan *TransferResult, w.cfg.WorkerNumber*2)
 
 	for {
 		msg, rh := w.sqs.ReceiveMessages(ctx)
@@ -408,8 +393,6 @@ func (w *Worker) processMessage(ctx context.Context, msg, rh *string) (obj *Obje
 		if item != nil {
 			oldSeq = getHex(&item.Sequencer)
 		}
-
-		// log.Printf("Seq is %d, Old Seq is %d\n", seq, oldSeq)
 
 		// equals might be a retry
 		if seq < oldSeq {
@@ -486,15 +469,14 @@ func (w *Worker) processResult(ctx context.Context, obj *Object, rh *string, res
 	log.Printf("----->Transferred 1 object %s with status %s\n", obj.Key, res.status)
 	w.db.UpdateItem(ctx, &obj.Key, res)
 
-	if res.status == "DONE" {
+	if res.status == "DONE" || res.status == "CANCEL" {
 		w.sqs.DeleteMessage(ctx, rh)
 	}
 }
 
 // heartBeat is to extend the visibility timeout before timeout happends
-// Default timeout is
 func (w *Worker) heartBeat(ctx context.Context, key, rh *string) {
-	timeout := 15 // Default time out is 15 minutes
+	timeout := 15 // Assume default time out is 15 minutes
 
 	// log.Printf("Heart Beat %d for %s", 1, *key)
 	interval := 60
@@ -672,7 +654,6 @@ func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, destKey,
 		// The list of parts must be in ascending order
 		p := <-partCh
 		allParts[p.partNumber-1] = p
-
 	}
 
 	return allParts, nil
@@ -689,9 +670,17 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, destKey *string, sta
 
 	log.Printf("----->Downloading %d Bytes from %s/%s\n", chunkSize, w.cfg.SrcBucket, obj.Key)
 
-	// TODO: Add metadata to GetObject result
 	body, err := w.srcClient.GetObject(ctx, &obj.Key, obj.Size, start, chunkSize, "null")
 	if err != nil {
+
+		var ae *types.NoSuchKey
+		if errors.As(err, &ae) {
+			log.Printf("No such key %s, the object might be deleted. Cancelling...", obj.Key)
+			return &TransferResult{
+				status: "CANCEL",
+				err:    err,
+			}
+		}
 		// status = "ERROR"
 		return &TransferResult{
 			status: "ERROR",

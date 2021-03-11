@@ -102,7 +102,6 @@ func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string,
 		log.Fatalf("Failed to load default SDK config to create S3 client - %s\n", err.Error())
 	}
 
-	// TODO: Verify if this works for other clouds
 	client := s3.NewFromConfig(config, func(o *s3.Options) {
 		// retryer := retry.AddWithMaxBackoffDelay(retry.NewStandard(), time.Second*5)
 		// o.Retryer = retryer
@@ -178,9 +177,6 @@ func (c *S3Client) listObjectFn(ctx context.Context, continuationToken, prefix, 
 	}
 
 	// start := time.Now()
-
-	// TODO: Verify if this op works for other cloud service
-	// For example, GCP does not support V2
 	output, err := c.client.ListObjectsV2(ctx, input)
 	if err != nil {
 		log.Printf("Unable to list objects in /%s - %s\n", *prefix, err.Error())
@@ -192,10 +188,8 @@ func (c *S3Client) listObjectFn(ctx context.Context, continuationToken, prefix, 
 	} else {
 		*continuationToken = "End"
 	}
-
 	// end := time.Since(start)
 	// log.Printf("Time for api request in %v seconds", end)
-
 	return output, nil
 }
 
@@ -541,3 +535,6 @@ func (c *S3Client) AbortMultipartUpload(ctx context.Context, key, uploadID *stri
 
 	return nil
 }
+
+// NoSuchKeyError is an exception when trying to get an object that is deleted.
+// type NoSuchKeyError types.NoSuchKey
