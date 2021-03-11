@@ -3,27 +3,11 @@
 
 # drhcli
 
-A distributed CLI to replicate data to Amazon S3 from other cloud storage services.
+A distributed CLI to replicate data to Amazon S3 from other cloud storage services (including Aliyun OSS, Tencent COS, Qiniu Kodo) or between AWS regions (cross partition).
 
 ## Introduction
 
 This tool leverages Amazon SQS to distribute the replication processes in many worker nodes. You can run as many worker nodes as required concurrently for large volume of objects. Each worker node will consume the messages from Amazon SQS and start transferring from the source to destination. Each message contains information that represents a object in cloud storage service to be replicated.
-
-
-## TODO
-
-Below features are planed in the first offical release
-
-- [x] Basical Project Structure
-- [x] Store replication status in DynamoDB
-- [ ] Support replicate Metadata info (Head Object)
-- [x] Support S3 Event Messages
-- [x] Support Mulipart uploads when upload ID already exists
-- [ ] Support Other cloud storage service
-- [x] Implement heart beat for large file transfer (extend message visibility timeout)
-- [x] Add logic when destination prefix is not empty
-- [x] Create docker image
-- [ ] Create Unit Test cases
 
 
 ## Installation
@@ -36,8 +20,6 @@ release=0.1.0
 curl -LO "https://github.com/daixba/drhcli/releases/download/v${release}/drhcli_${release}_linux_386.tar.gz"
 tar zxvf drhcli_${release}_linux_386.tar.gz
 ```
-
-
 
 To verify, simply run `./drhcli version`
 ```
@@ -119,4 +101,3 @@ To actually start the job, use `drhcli run` command.
 ```
 ./drhcli run -t Worker
 ```
-

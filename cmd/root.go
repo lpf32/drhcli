@@ -84,6 +84,7 @@ func initConfig() {
 	viper.SetDefault("options.finderDepth", drh.DefaultFinderDepth)
 	viper.SetDefault("options.finderNumber", drh.DefaultFinderNumber)
 	viper.SetDefault("options.workerNumber", drh.DefaultWorkerNumber)
+	viper.SetDefault("options.includeMetadata", false)
 
 	viper.BindEnv("srcType", "SOURCE_TYPE")
 	viper.BindEnv("srcBucket", "SRC_BUCKET")
@@ -109,6 +110,7 @@ func initConfig() {
 	viper.BindEnv("options.finderDepth", "FINDER_DEPTH")
 	viper.BindEnv("options.finderNumber", "FINDER_NUMBER")
 	viper.BindEnv("options.workerNumber", "WORKER_NUMBER")
+	viper.BindEnv("options.includeMetadata", "INCLUDE_METADATA")
 
 	if cfgFile != "" {
 		// Use config file from the flag.
@@ -135,6 +137,7 @@ func initConfig() {
 		FinderDepth:        viper.GetInt("options.finderDepth"),
 		FinderNumber:       viper.GetInt("options.finderNumber"),
 		WorkerNumber:       viper.GetInt("options.workerNumber"),
+		IncludeMetadata:    viper.GetBool("options.includeMetadata"),
 	}
 
 	cfg = &drh.JobConfig{
