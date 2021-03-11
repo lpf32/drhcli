@@ -42,43 +42,6 @@ type SsmService struct {
 	client *ssm.Client
 }
 
-// Message is Default message (body) format in SQS
-// Assume Message can have different format comparing with drh.Object
-// type Message struct {
-// 	Key, Version string
-// 	Size         int64
-// }
-
-// // Helper function to convert Message into Json string
-// func (m *Message) toString() *string {
-
-// 	msg, err := json.Marshal(*m)
-
-// 	var msgStr string
-// 	if err != nil {
-// 		fmt.Printf("Error: %s", err)
-// 		msgStr = ""
-// 	}
-// 	msgStr = string(msg)
-
-// 	// msgStr := fmt.Sprintf(`{"key":"%s","size":%d,"version":"%s"}`, m.Key, m.Size, m.Version)
-// 	return &msgStr
-// }
-
-// // Helper function to create message base on Json string
-// func newMessage(str string) (m *Message) {
-
-// 	m = new(Message)
-// 	err := json.Unmarshal([]byte(str), m)
-
-// 	if err != nil {
-// 		log.Fatalf("Unalbe to convert string to message - %s", err.Error())
-// 		return nil
-// 	}
-// 	// log.Printf("Key: %s, Size: %d\n", m.Key, m.Size)
-// 	return
-// }
-
 // NewSsmService is a helper func to create a SsmService instance
 func NewSsmService(ctx context.Context) (*SsmService, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
@@ -145,22 +108,20 @@ func NewSqsService(ctx context.Context, queueName string) (*SqsService, error) {
 }
 
 // SendMessage function sends 1 message at a time to the Queue
-func (ss *SqsService) SendMessage(ctx context.Context, o *Object) error {
-	// log.Printf("Send Message to Queue")
+func (ss *SqsService) SendMessage(ctx context.Context, body *string) {
+	// log.Printf("Sending 1 Message to Queue")
 
 	input := &sqs.SendMessageInput{
 		QueueUrl:    &ss.queueURL,
-		MessageBody: o.toString(),
+		MessageBody: body,
 	}
 
-	resp, err := ss.client.SendMessage(ctx, input)
+	_, err := ss.client.SendMessage(ctx, input)
 	if err != nil {
-		log.Printf("Error: %s", err)
-		return err
+		log.Fatalf("Failed to send the messages in batch to SQS Queue - %s\n", err.Error())
 	}
 
-	log.Println("Sent message with ID: " + *resp.MessageId)
-	return nil
+	// log.Println("Sent message with ID: " + *resp.MessageId)
 }
 
 // SendMessageInBatch function sends messages to the Queue in batch.
@@ -197,10 +158,12 @@ func (ss *SqsService) SendMessageInBatch(ctx context.Context, batch []*string) {
 }
 
 // ReceiveMessages function receives many messages in batch from the Queue
+// Currently, only 1 message is returned, MaxNumberOfMessages is defaulted to 1
 func (ss *SqsService) ReceiveMessages(ctx context.Context) (body, receiptHandle *string) {
 
 	input := &sqs.ReceiveMessageInput{
-		QueueUrl: &ss.queueURL,
+		QueueUrl:        &ss.queueURL,
+		WaitTimeSeconds: 20,
 	}
 	output, err := ss.client.ReceiveMessage(ctx, input)
 
@@ -215,12 +178,6 @@ func (ss *SqsService) ReceiveMessages(ctx context.Context) (body, receiptHandle 
 		return nil, nil
 	}
 
-	// log.Println("Message ID:     " + *output.Messages[0].MessageId)
-	// log.Println("Message Handle: " + *output.Messages[0].ReceiptHandle)
-	// log.Println("Message Body: " + *output.Messages[0].Body)
-
-	// TODO: Support S3 Event Message
-	// Need to check the format of the message body
 	body = output.Messages[0].Body
 	receiptHandle = output.Messages[0].ReceiptHandle
 
