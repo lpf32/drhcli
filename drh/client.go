@@ -21,7 +21,7 @@ import (
 // Client is an interface used to contact with Cloud Storage Services
 type Client interface {
 	// READ
-	HeadObject(ctx context.Context, key *string)
+	HeadObject(ctx context.Context, key *string) *Metadata
 	GetObject(ctx context.Context, key *string, size, start, chunkSize int64, version string) ([]byte, error)
 	ListObjects(ctx context.Context, continuationToken, prefix *string, maxKeys int32) ([]*Object, error)
 	ListCommonPrefixes(ctx context.Context, depth int, maxKeys int32) (prefixes []*string)
@@ -29,8 +29,8 @@ type Client interface {
 	GetUploadID(ctx context.Context, key *string) (uploadID *string)
 
 	// WRITE
-	PutObject(ctx context.Context, key *string, body []byte, storageClass *string) (etag *string, err error)
-	CreateMultipartUpload(ctx context.Context, key, storageClass *string) (uploadID *string, err error)
+	PutObject(ctx context.Context, key *string, body []byte, storageClass *string, meta *Metadata) (etag *string, err error)
+	CreateMultipartUpload(ctx context.Context, key, storageClass *string, meta *Metadata) (uploadID *string, err error)
 	CompleteMultipartUpload(ctx context.Context, key, uploadID *string, parts []*Part) (etag *string, err error)
 	UploadPart(ctx context.Context, key *string, body []byte, uploadID *string, partNumber int) (etag *string, err error)
 	AbortMultipartUpload(ctx context.Context, key, uploadID *string) (err error)
@@ -283,8 +283,8 @@ func (c *S3Client) ListObjects(ctx context.Context, continuationToken, prefix *s
 }
 
 // HeadObject is a function to get extra metadata from Amazon S3
-func (c *S3Client) HeadObject(ctx context.Context, key *string) {
-	log.Printf("S3> Get extra metadata info for %s\n", *key)
+func (c *S3Client) HeadObject(ctx context.Context, key *string) *Metadata {
+	// log.Printf("S3> Get extra metadata info for %s\n", *key)
 
 	input := &s3.HeadObjectInput{
 		Bucket: &c.bucket,
@@ -293,23 +293,28 @@ func (c *S3Client) HeadObject(ctx context.Context, key *string) {
 
 	output, err := c.client.HeadObject(ctx, input)
 	if err != nil {
-		log.Printf("Unable to head object for %s - %s\n", *key, err.Error())
-		// return err
+		log.Printf("Failed to head object for %s - %s\n", *key, err.Error())
+		return nil
 	}
-	log.Printf("S3> Content type is %s\n", *output.ContentType)
+
+	return &Metadata{
+		ContentType:     output.ContentType,
+		ContentLanguage: output.ContentLanguage,
+		ContentEncoding: output.ContentEncoding,
+		CacheControl:    output.CacheControl,
+		Metadata:        output.Metadata,
+	}
 
 }
 
 // PutObject is a function to put (upload) an object to Amazon S3
-func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, storageClass *string) (etag *string, err error) {
+func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, storageClass *string, meta *Metadata) (etag *string, err error) {
 	// log.Printf("S3> Uploading object %s to bucket %s\n", key, c.bucket)
 
 	md5Bytes := md5.Sum(body)
 	// contentMD5 := hex.EncodeToString(md5Bytes[:])
 	contentMD5 := base64.StdEncoding.EncodeToString(md5Bytes[:])
-
 	// fmt.Println(contentMD5)
-
 	reader := bytes.NewReader(body)
 
 	input := &s3.PutObjectInput{
@@ -318,6 +323,13 @@ func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, stor
 		Body:         reader,
 		ContentMD5:   &contentMD5,
 		StorageClass: types.StorageClass(*storageClass),
+	}
+	if meta != nil {
+		input.ContentType = meta.ContentType
+		input.ContentEncoding = meta.ContentEncoding
+		input.ContentLanguage = meta.ContentLanguage
+		input.CacheControl = meta.CacheControl
+		input.Metadata = meta.Metadata
 	}
 
 	output, err := c.client.PutObject(ctx, input)
@@ -353,14 +365,20 @@ func (c *S3Client) DeleteObject(ctx context.Context, key *string) (err error) {
 // CreateMultipartUpload is a function to initilize a multipart upload process.
 // This func returns an upload ID used to indicate the multipart upload.
 // All parts will be uploaded with this upload ID, after that, all parts by this ID will be combined to create the full object.
-func (c *S3Client) CreateMultipartUpload(ctx context.Context, key, storageClass *string) (uploadID *string, err error) {
+func (c *S3Client) CreateMultipartUpload(ctx context.Context, key, storageClass *string, meta *Metadata) (uploadID *string, err error) {
 	// log.Printf("S3> Create Multipart Upload for %s\n", *key)
 
 	input := &s3.CreateMultipartUploadInput{
 		Bucket:       &c.bucket,
 		Key:          key,
 		StorageClass: types.StorageClass(*storageClass),
-		// metadata: "s",
+	}
+	if meta != nil {
+		input.ContentType = meta.ContentType
+		input.ContentEncoding = meta.ContentEncoding
+		input.ContentLanguage = meta.ContentLanguage
+		input.CacheControl = meta.CacheControl
+		input.Metadata = meta.Metadata
 	}
 
 	output, err := c.client.CreateMultipartUpload(ctx, input)

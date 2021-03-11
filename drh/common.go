@@ -48,7 +48,21 @@ type Part struct {
 
 // Metadata info of object
 type Metadata struct {
-	ContentType string
+	// ContentType
+	ContentType *string
+
+	// ContentLanguage
+	ContentLanguage *string
+
+	// ContentEncoding
+	ContentEncoding *string
+
+	// CacheControl
+	CacheControl *string
+
+	// Custom metadata to store with the object in S3.
+	// Map keys will be normalized to lower-case.
+	Metadata map[string]string
 }
 
 // Helper function to convert Object into Json string

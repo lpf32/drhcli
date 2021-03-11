@@ -491,23 +491,6 @@ func (w *Worker) processResult(ctx context.Context, obj *Object, rh *string, res
 	}
 }
 
-// Internal func to deal with the transferring of small file.
-// Simply transfer the whole object
-func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, destKey *string, transferCh chan struct{}) *TransferResult {
-
-	// Add a transferring record
-	transferCh <- struct{}{}
-
-	result := w.transfer(ctx, obj, destKey, 0, obj.Size, nil, 0)
-	// log.Printf("Completed the transfer of %s with etag %s\n", obj.Key, *result.etag)
-
-	// Remove the transferring record  after transfer is completed
-	<-transferCh
-
-	return result
-
-}
-
 // heartBeat is to extend the visibility timeout before timeout happends
 // Default timeout is
 func (w *Worker) heartBeat(ctx context.Context, key, rh *string) {
@@ -516,16 +499,13 @@ func (w *Worker) heartBeat(ctx context.Context, key, rh *string) {
 	// log.Printf("Heart Beat %d for %s", 1, *key)
 	interval := 60
 	i := 1
-
 	time.Sleep(time.Second * 50) // 10 seconds ahead, buffer for api call
-
 	for {
 		select {
 		case <-ctx.Done():
 			// log.Printf("Received Cancel of heart beat for %s", *key)
 			return
 		default:
-
 			i++
 			// log.Printf("Heart Beat %d for %s", i, *key)
 			if i%timeout == 0 {
@@ -536,8 +516,28 @@ func (w *Worker) heartBeat(ctx context.Context, key, rh *string) {
 
 			time.Sleep(time.Second * time.Duration(interval))
 		}
-
 	}
+}
+
+// Internal func to deal with the transferring of small file.
+// Simply transfer the whole object
+func (w *Worker) migrateSmallFile(ctx context.Context, obj *Object, destKey *string, transferCh chan struct{}) *TransferResult {
+
+	// Add a transferring record
+	transferCh <- struct{}{}
+
+	var meta *Metadata
+	if w.cfg.IncludeMetadata {
+		meta = w.srcClient.HeadObject(ctx, &obj.Key)
+	}
+
+	result := w.transfer(ctx, obj, destKey, 0, obj.Size, nil, 0, meta)
+	// log.Printf("Completed the transfer of %s with etag %s\n", obj.Key, *result.etag)
+
+	// Remove the transferring record  after transfer is completed
+	<-transferCh
+
+	return result
 
 }
 
@@ -558,9 +558,13 @@ func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, destKey *strin
 		parts = w.desClient.ListParts(ctx, destKey, uploadID)
 
 	} else {
-		// TODO: Get metadata first by HeadObject
 		// Add metadata to CreateMultipartUpload func.
-		uploadID, err = w.desClient.CreateMultipartUpload(ctx, destKey, &w.cfg.DestStorageClass)
+		var meta *Metadata
+		if w.cfg.IncludeMetadata {
+			meta = w.srcClient.HeadObject(ctx, &obj.Key)
+		}
+
+		uploadID, err = w.desClient.CreateMultipartUpload(ctx, destKey, &w.cfg.DestStorageClass, meta)
 		if err != nil {
 			log.Printf("Failed to create upload ID - %s for %s\n", err.Error(), *destKey)
 			return &TransferResult{
@@ -637,7 +641,7 @@ func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, destKey,
 
 			go func(i int) {
 				defer wg.Done()
-				result := w.transfer(ctx, obj, destKey, int64(i*chunkSize), int64(chunkSize), uploadID, partNumber)
+				result := w.transfer(ctx, obj, destKey, int64(i*chunkSize), int64(chunkSize), uploadID, partNumber, nil)
 
 				if result.err != nil {
 					partErrorCh <- result.err
@@ -675,7 +679,7 @@ func (w *Worker) startMultipartUpload(ctx context.Context, obj *Object, destKey,
 }
 
 // transfer is a process to download data from source and upload to destination
-func (w *Worker) transfer(ctx context.Context, obj *Object, destKey *string, start, chunkSize int64, uploadID *string, partNumber int) (result *TransferResult) {
+func (w *Worker) transfer(ctx context.Context, obj *Object, destKey *string, start, chunkSize int64, uploadID *string, partNumber int, meta *Metadata) (result *TransferResult) {
 	var etag *string
 	var err error
 
@@ -704,7 +708,7 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, destKey *string, sta
 
 	} else {
 		log.Printf("----->Uploading %d Bytes to %s/%s\n", chunkSize, w.cfg.DestBucket, *destKey)
-		etag, err = w.desClient.PutObject(ctx, destKey, body, &w.cfg.DestStorageClass)
+		etag, err = w.desClient.PutObject(ctx, destKey, body, &w.cfg.DestStorageClass, meta)
 	}
 
 	if err != nil {
