@@ -117,7 +117,7 @@ func (f *Finder) Run(ctx context.Context) {
 	}
 
 	// Maximum number of queued messages to be sent to SQS
-	var bufferSize int = 3000
+	var bufferSize int = 2000
 
 	// Assume sending messages is slower than listing and comparing
 	// Create a channel to block the process not to generate too many messages to be sent.
