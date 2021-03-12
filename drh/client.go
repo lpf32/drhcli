@@ -461,34 +461,38 @@ func (c *S3Client) CompleteMultipartUpload(ctx context.Context, key, uploadID *s
 // ListParts returns list of parts by upload ID in a map
 func (c *S3Client) ListParts(ctx context.Context, key, uploadID *string) (parts map[int]*Part) {
 	// log.Printf("S3> List Parts for %s - with upload ID %s\n", *key, *uploadID)
-
-	// TODO: Handling parts more than 1000
 	input := &s3.ListPartsInput{
 		Bucket:   &c.bucket,
 		Key:      key,
 		UploadId: uploadID,
+		MaxParts: 1000,
 	}
 
-	output, err := c.client.ListParts(ctx, input)
-	if err != nil {
-		log.Printf("Failed to list parts for %s - %s\n", *key, err.Error())
-		return nil
-	}
+	parts = make(map[int]*Part, 10000)
 
-	len := len(output.Parts)
-	log.Printf("Totally %d part(s) found for %s\n", len, *key)
-	parts = make(map[int]*Part, len)
-
-	for _, part := range output.Parts {
-
-		etag := strings.Trim(*part.ETag, "\"")
-		parts[int(part.PartNumber)] = &Part{
-			partNumber: int(part.PartNumber),
-			etag:       &etag,
+	for {
+		output, err := c.client.ListParts(ctx, input)
+		if err != nil {
+			log.Printf("Failed to list parts for %s - %s\n", *key, err.Error())
+			// return nil
 		}
-	}
-	return
 
+		for _, part := range output.Parts {
+			// log.Printf("Found Part %d - etag %s", part.PartNumber, *part.ETag)
+			etag := strings.Trim(*part.ETag, "\"")
+			parts[int(part.PartNumber)] = &Part{
+				partNumber: int(part.PartNumber),
+				etag:       &etag,
+			}
+		}
+		if !output.IsTruncated {
+			break
+		}
+		input.PartNumberMarker = output.NextPartNumberMarker
+	}
+	log.Printf("Totally %d part(s) found for %s\n", len(parts), *key)
+
+	return
 }
 
 // GetUploadID use ListMultipartUploads to get the last unfinished upload ID by key
@@ -535,6 +539,3 @@ func (c *S3Client) AbortMultipartUpload(ctx context.Context, key, uploadID *stri
 
 	return nil
 }
-
-// NoSuchKeyError is an exception when trying to get an object that is deleted.
-// type NoSuchKeyError types.NoSuchKey
