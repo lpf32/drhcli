@@ -64,34 +64,7 @@ func getEndpointURL(region, sourceType string) (url string) {
 		url = ""
 	}
 	return url
-
 }
-
-// func getOptions(ctx context.Context, region, sourceType string, cred *S3Credentials) s3.Options {
-
-// 	retryer := retry.AddWithMaxBackoffDelay(retry.NewStandard(), time.Second*5)
-
-// 	options := s3.Options{
-// 		Region:  region,
-// 		Retryer: retryer,
-// 	}
-
-// 	url := getEndpointURL(region, sourceType)
-// 	if url != "" {
-// 		options.EndpointResolver = s3.EndpointResolverFromURL(url)
-// 	}
-// 	if cred.noSignRequest {
-// 		log.Println("noSignRequest")
-// 		options.Credentials = aws.AnonymousCredentials{}
-// 	} else if cred.accessKey != "" {
-// 		log.Printf("Sign with key %s in region %s\n", cred.accessKey, region)
-// 		options.Credentials = aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cred.accessKey, cred.secretKey, ""))
-// 	} else {
-// 		options.Credentials = aws.NewConfig().Credentials
-// 	}
-
-// 	return options
-// }
 
 // NewS3Client create a S3Client instance
 func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string, cred *S3Credentials) *S3Client {
@@ -194,9 +167,11 @@ func (c *S3Client) listObjectFn(ctx context.Context, continuationToken, prefix, 
 }
 
 // Recursively list sub directories
-func (c *S3Client) listPrefixFn(ctx context.Context, depth int, prefix *string, maxKeys int32, levelCh chan<- *string, wg *sync.WaitGroup) {
+func (c *S3Client) listPrefixFn(ctx context.Context, depth int, prefix *string, maxKeys int32, levelCh chan<- *string, listCh chan struct{}, wg *sync.WaitGroup) {
 
 	defer wg.Done()
+
+	listCh <- struct{}{}
 
 	if depth == 0 {
 		levelCh <- prefix
@@ -208,20 +183,21 @@ func (c *S3Client) listPrefixFn(ctx context.Context, depth int, prefix *string, 
 	i := 0
 
 	for continuationToken != "End" {
-		output, _ := c.listObjectFn(ctx, &continuationToken, prefix, &delimiter, maxKeys)
-
-		// log.Printf("Getting %d prefixes in /%s\n", len(output.CommonPrefixes), *prefix)
-
+		output, err := c.listObjectFn(ctx, &continuationToken, prefix, &delimiter, maxKeys)
+		if err != nil {
+			log.Fatalf("Failed to list prefixes in /%s for bucket %s, quit the process. Please try again later.", *prefix, c.bucket)
+		}
 		for _, cp := range output.CommonPrefixes {
 			i++
 			wg.Add(1)
-			go c.listPrefixFn(ctx, depth-1, cp.Prefix, maxKeys, levelCh, wg)
+			go c.listPrefixFn(ctx, depth-1, cp.Prefix, maxKeys, levelCh, listCh, wg)
 		}
 
 	}
 	if i == 0 {
 		levelCh <- prefix
 	}
+	<-listCh
 }
 
 // ListCommonPrefixes is a function to list common prefixes.
@@ -235,11 +211,16 @@ func (c *S3Client) ListCommonPrefixes(ctx context.Context, depth int, maxKeys in
 	}
 
 	// Maximum around 100K
-	levelCh := make(chan *string, 1<<17)
+	levelCh := make(chan *string, 1<<20)
+
+	// Restrict the number of list func happened concurrently.
+	listCh := make(chan struct{}, 200)
+
 	wg.Add(1)
-	go c.listPrefixFn(ctx, depth, &c.prefix, maxKeys, levelCh, &wg)
+	go c.listPrefixFn(ctx, depth, &c.prefix, maxKeys, levelCh, listCh, &wg)
 	wg.Wait()
 	close(levelCh)
+	close(listCh)
 
 	for cp := range levelCh {
 		log.Printf("Common Prefix /%s\n", *cp)
