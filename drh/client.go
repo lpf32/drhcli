@@ -66,7 +66,7 @@ func getEndpointURL(region, sourceType string) (url string) {
 	return url
 }
 
-// NewS3Client create a S3Client instance
+// NewS3Client creates a S3Client instance
 func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string, cred *S3Credentials) *S3Client {
 
 	// config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
