@@ -28,7 +28,7 @@ import (
 )
 
 // Version Number
-const Version = "v0.1.0"
+const Version = "v1.0.0"
 
 var (
 	cfgFile, jobType string

@@ -1,4 +1,4 @@
-FROM golang:1.16-alpine
+FROM golang:1.16-alpine as builder
 RUN apk update \
     && apk upgrade \
     && apk --no-cache add git ca-certificates \
@@ -39,5 +39,5 @@ ENV WORKER_NUMBER 4
 
 WORKDIR /app
 RUN touch config.yaml
-COPY --from=0 /build/drhcli .
+COPY --from=builder /build/drhcli .
 ENTRYPOINT ["/app/drhcli", "run"]
