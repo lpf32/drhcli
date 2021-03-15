@@ -148,10 +148,20 @@ func (ss *SqsService) SendMessageInBatch(ctx context.Context, batch []*string) {
 		Entries:  entries,
 	}
 
-	_, err := ss.client.SendMessageBatch(ctx, input)
+	// Sometimes, there will be unexpected exception on SendMessageBatch
+	// The standard retryer doesn't work
+	// Add another retry layer - each time 30 seconds
+	retry := 0
+	for retry <= 5 {
+		_, err := ss.client.SendMessageBatch(ctx, input)
 
-	if err != nil {
-		log.Fatalf("Unable to send the messages in batch to SQS Queue - %s\n", err.Error())
+		if err != nil {
+			retry++
+			log.Printf("Failed to send the messages in batch to SQS Queue - %s - Retry %d time(s)\n", err.Error(), retry)
+			time.Sleep(time.Second * 30)
+		} else {
+			return
+		}
 	}
 
 	// log.Printf("Sent %d messages successfully\n", len(resp.Successful))
@@ -252,7 +262,7 @@ func (ss *SqsService) IsQueueEmpty(ctx context.Context) (isEmpty bool) {
 	return
 }
 
-// GetParameterValue is a function to check if the Queue is empty or not
+// GetParameterValue is a function to read the value of a parameter in System Manager Parameter Store
 func (s *SsmService) GetParameterValue(ctx context.Context, param *string, withDecryption bool) *string {
 	log.Printf("Get Parameter Value of %s from SSM\n", *param)
 

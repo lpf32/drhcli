@@ -116,8 +116,8 @@ func (f *Finder) Run(ctx context.Context) {
 		log.Fatalf("Queue might not be empty or Unknown error... Please try again later")
 	}
 
-	// Maximum number of queued messages to be sent to SQS
-	var bufferSize int = 2000
+	// Maximum number of queued batches to be sent to SQS
+	var bufferSize int = 500
 
 	// Assume sending messages is slower than listing and comparing
 	// Create a channel to block the process not to generate too many messages to be sent.
@@ -159,7 +159,7 @@ func (f *Finder) getTargetObjects(ctx context.Context, prefix *string) (objects 
 	// log.Printf("Getting target list in destination prefix /%s\n", *destPrefix)
 
 	token := ""
-	objects = make(map[string]*int64)
+	objects = make(map[string]*int64, 1<<17)
 
 	for token != "End" {
 		tar, err := f.desClient.ListObjects(ctx, &token, destPrefix, f.cfg.MaxKeys)
