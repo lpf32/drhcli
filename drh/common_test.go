@@ -262,6 +262,14 @@ func TestRemovePrefix(t *testing.T) {
 			},
 			want: "foo/bar.png",
 		},
+		{
+			name: "Test duplicate prefix",
+			args: args{
+				key:    "foo/foo/bar.png",
+				prefix: "foo",
+			},
+			want: "foo/bar.png",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
