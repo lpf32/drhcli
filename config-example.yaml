@@ -12,7 +12,7 @@ destRegion: cn-north-1
 destCredential:
 destStorageClass: STANDARD
 destInCurrentAccount: true
-destAcl: "bucket-owner-full-control"
+destAcl: bucket-owner-full-control
 
 jobTableName: test-table
 jobQueueName: test-queue
