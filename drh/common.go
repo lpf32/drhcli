@@ -132,9 +132,13 @@ func removePrefix(key, prefix *string) *string {
 }
 
 func appendPrefix(key, prefix *string) *string {
-	if prefix == nil || *prefix == "" {
+	if prefix == nil || *prefix == "" || *prefix == "/" {
 		return key
 	}
-	newkey := fmt.Sprintf("%s/%s", *prefix, *key)
+	delimiter := ""
+	if !strings.HasSuffix(*prefix, "/") {
+		delimiter = "/"
+	}
+	newkey := fmt.Sprintf("%s%s%s", *prefix, delimiter, *key)
 	return &newkey
 }

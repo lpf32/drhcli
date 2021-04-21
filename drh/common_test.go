@@ -306,6 +306,22 @@ func TestAppendPrefix(t *testing.T) {
 			},
 			want: "foo/bar.png",
 		},
+		{
+			name: "Test prefix with /",
+			args: args{
+				key:    "foo/bar.png",
+				prefix: "abc/",
+			},
+			want: "abc/foo/bar.png",
+		},
+		{
+			name: "Test prefix with / only",
+			args: args{
+				key:    "foo/bar.png",
+				prefix: "/",
+			},
+			want: "foo/bar.png",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

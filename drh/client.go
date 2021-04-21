@@ -29,8 +29,8 @@ type Client interface {
 	GetUploadID(ctx context.Context, key *string) (uploadID *string)
 
 	// WRITE
-	PutObject(ctx context.Context, key *string, body []byte, storageClass *string, meta *Metadata) (etag *string, err error)
-	CreateMultipartUpload(ctx context.Context, key, storageClass *string, meta *Metadata) (uploadID *string, err error)
+	PutObject(ctx context.Context, key *string, body []byte, storageClass, acl *string, meta *Metadata) (etag *string, err error)
+	CreateMultipartUpload(ctx context.Context, key, storageClass, acl *string, meta *Metadata) (uploadID *string, err error)
 	CompleteMultipartUpload(ctx context.Context, key, uploadID *string, parts []*Part) (etag *string, err error)
 	UploadPart(ctx context.Context, key *string, body []byte, uploadID *string, partNumber int) (etag *string, err error)
 	AbortMultipartUpload(ctx context.Context, key, uploadID *string) (err error)
@@ -67,7 +67,7 @@ func getEndpointURL(region, sourceType string) (url string) {
 }
 
 // NewS3Client creates a S3Client instance
-func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string, cred *S3Credentials) *S3Client {
+func NewS3Client(ctx context.Context, bucket, prefix, endpoint, region, sourceType string, cred *S3Credentials) *S3Client {
 
 	// config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	config, err := config.LoadDefaultConfig(ctx)
@@ -79,8 +79,20 @@ func NewS3Client(ctx context.Context, bucket, prefix, region, sourceType string,
 		// retryer := retry.AddWithMaxBackoffDelay(retry.NewStandard(), time.Second*5)
 		// o.Retryer = retryer
 		o.Region = region
-		url := getEndpointURL(region, sourceType)
+		var url string
+		if endpoint != "" {
+			// if endpoint is provided, use the endpoint.
+			if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+				url = endpoint
+			} else {
+				url = "https://" + endpoint // Default to https://
+			}
+		} else {
+			url = getEndpointURL(region, sourceType)
+		}
+
 		if url != "" {
+			log.Printf("S3> Source Endpoint URL is set to %s\n", url)
 			o.EndpointResolver = s3.EndpointResolverFromURL(url)
 		}
 		if cred.noSignRequest {
@@ -283,7 +295,7 @@ func (c *S3Client) HeadObject(ctx context.Context, key *string) *Metadata {
 }
 
 // PutObject is a function to put (upload) an object to Amazon S3
-func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, storageClass *string, meta *Metadata) (etag *string, err error) {
+func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, storageClass, acl *string, meta *Metadata) (etag *string, err error) {
 	// log.Printf("S3> Uploading object %s to bucket %s\n", key, c.bucket)
 
 	md5Bytes := md5.Sum(body)
@@ -292,12 +304,17 @@ func (c *S3Client) PutObject(ctx context.Context, key *string, body []byte, stor
 	// fmt.Println(contentMD5)
 	reader := bytes.NewReader(body)
 
+	if *acl == "" {
+		*acl = string(types.ObjectCannedACLBucketOwnerFullControl)
+	}
+
 	input := &s3.PutObjectInput{
 		Bucket:       &c.bucket,
 		Key:          key,
 		Body:         reader,
 		ContentMD5:   &contentMD5,
 		StorageClass: types.StorageClass(*storageClass),
+		ACL:          types.ObjectCannedACL(*acl),
 	}
 	if meta != nil {
 		input.ContentType = meta.ContentType
@@ -340,13 +357,17 @@ func (c *S3Client) DeleteObject(ctx context.Context, key *string) (err error) {
 // CreateMultipartUpload is a function to initilize a multipart upload process.
 // This func returns an upload ID used to indicate the multipart upload.
 // All parts will be uploaded with this upload ID, after that, all parts by this ID will be combined to create the full object.
-func (c *S3Client) CreateMultipartUpload(ctx context.Context, key, storageClass *string, meta *Metadata) (uploadID *string, err error) {
+func (c *S3Client) CreateMultipartUpload(ctx context.Context, key, storageClass, acl *string, meta *Metadata) (uploadID *string, err error) {
 	// log.Printf("S3> Create Multipart Upload for %s\n", *key)
+	if *acl == "" {
+		*acl = string(types.ObjectCannedACLBucketOwnerFullControl)
+	}
 
 	input := &s3.CreateMultipartUploadInput{
 		Bucket:       &c.bucket,
 		Key:          key,
 		StorageClass: types.StorageClass(*storageClass),
+		ACL:          types.ObjectCannedACL(*acl),
 	}
 	if meta != nil {
 		input.ContentType = meta.ContentType
