@@ -97,8 +97,8 @@ func NewFinder(ctx context.Context, cfg *JobConfig) (f *Finder) {
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
-	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
-	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, cfg.DestRegion, "Amazon_S3", desCred)
+	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcEndpoint, cfg.SrcRegion, cfg.SrcType, srcCred)
+	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, "", cfg.DestRegion, "Amazon_S3", desCred)
 
 	f = &Finder{
 		srcClient: srcClient,
@@ -288,8 +288,8 @@ func NewWorker(ctx context.Context, cfg *JobConfig) (w *Worker) {
 	srcCred := getCredentials(ctx, cfg.SrcCredential, cfg.SrcInCurrentAccount, sm)
 	desCred := getCredentials(ctx, cfg.DestCredential, cfg.DestInCurrentAccount, sm)
 
-	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcRegion, cfg.SrcType, srcCred)
-	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, cfg.DestRegion, "Amazon_S3", desCred)
+	srcClient := NewS3Client(ctx, cfg.SrcBucket, cfg.SrcPrefix, cfg.SrcEndpoint, cfg.SrcRegion, cfg.SrcType, srcCred)
+	desClient := NewS3Client(ctx, cfg.DestBucket, cfg.DestPrefix, "", cfg.DestRegion, "Amazon_S3", desCred)
 
 	return &Worker{
 		srcClient: srcClient,
@@ -546,7 +546,7 @@ func (w *Worker) migrateBigFile(ctx context.Context, obj *Object, destKey *strin
 			meta = w.srcClient.HeadObject(ctx, &obj.Key)
 		}
 
-		uploadID, err = w.desClient.CreateMultipartUpload(ctx, destKey, &w.cfg.DestStorageClass, meta)
+		uploadID, err = w.desClient.CreateMultipartUpload(ctx, destKey, &w.cfg.DestStorageClass, &w.cfg.DestAcl, meta)
 		if err != nil {
 			log.Printf("Failed to create upload ID - %s for %s\n", err.Error(), *destKey)
 			return &TransferResult{
@@ -697,7 +697,7 @@ func (w *Worker) transfer(ctx context.Context, obj *Object, destKey *string, sta
 
 	} else {
 		log.Printf("----->Uploading %d Bytes to %s/%s\n", chunkSize, w.cfg.DestBucket, *destKey)
-		etag, err = w.desClient.PutObject(ctx, destKey, body, &w.cfg.DestStorageClass, meta)
+		etag, err = w.desClient.PutObject(ctx, destKey, body, &w.cfg.DestStorageClass, &w.cfg.DestAcl, meta)
 	}
 
 	if err != nil {

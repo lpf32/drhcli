@@ -74,8 +74,10 @@ func initConfig() {
 	viper.SetDefault("destStorageClass", "STANDARD")
 	viper.SetDefault("srcPrefix", "")
 	viper.SetDefault("srcCredential", "")
+	viper.SetDefault("srcEndpoint", "")
 	viper.SetDefault("destPrefix", "")
 	viper.SetDefault("destCredential", "")
+	viper.SetDefault("destAcl", "bucket-owner-full-control")
 
 	viper.SetDefault("options.chunkSize", drh.DefaultChunkSize)
 	viper.SetDefault("options.multipartThreshold", drh.DefaultMultipartThreshold)
@@ -90,6 +92,7 @@ func initConfig() {
 	viper.BindEnv("srcBucket", "SRC_BUCKET")
 	viper.BindEnv("srcPrefix", "SRC_PREFIX")
 	viper.BindEnv("srcRegion", "SRC_REGION")
+	viper.BindEnv("srcEndpoint", "SRC_ENDPOINT")
 	viper.BindEnv("srcCredential", "SRC_CREDENTIALS")
 	viper.BindEnv("SrcInCurrentAccount", "SRC_IN_CURRENT_ACCOUNT")
 
@@ -99,6 +102,7 @@ func initConfig() {
 	viper.BindEnv("destCredential", "DEST_CREDENTIALS")
 	viper.BindEnv("destInCurrentAccount", "DEST_IN_CURRENT_ACCOUNT")
 	viper.BindEnv("destStorageClass", "DEST_STORAGE_CLASS")
+	viper.BindEnv("destAcl", "DEST_ACL")
 
 	viper.BindEnv("jobTableName", "JOB_TABLE_NAME")
 	viper.BindEnv("jobQueueName", "JOB_QUEUE_NAME")
@@ -145,6 +149,7 @@ func initConfig() {
 		SrcBucket:            viper.GetString("srcBucket"),
 		SrcPrefix:            viper.GetString("srcPrefix"),
 		SrcRegion:            viper.GetString("srcRegion"),
+		SrcEndpoint:          viper.GetString("srcEndpoint"),
 		SrcCredential:        viper.GetString("srcCredential"),
 		SrcInCurrentAccount:  viper.GetBool("srcInCurrentAccount"),
 		DestBucket:           viper.GetString("destBucket"),
@@ -152,6 +157,7 @@ func initConfig() {
 		DestRegion:           viper.GetString("destRegion"),
 		DestCredential:       viper.GetString("destCredential"),
 		DestStorageClass:     viper.GetString("destStorageClass"),
+		DestAcl:              viper.GetString("destAcl"),
 		DestInCurrentAccount: viper.GetBool("destInCurrentAccount"),
 		JobTableName:         viper.GetString("jobTableName"),
 		JobQueueName:         viper.GetString("jobQueueName"),

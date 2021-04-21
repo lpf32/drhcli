@@ -2,6 +2,7 @@ srcType: Amazon_S3
 srcBucket: src-bucket
 srcPrefix:
 srcRegion: us-west-2
+srcEndpoint:
 srcCredential: src
 srcInCurrentAccount: false
 
@@ -11,6 +12,7 @@ destRegion: cn-north-1
 destCredential:
 destStorageClass: STANDARD
 destInCurrentAccount: true
+destAcl: "bucket-owner-full-control"
 
 jobTableName: test-table
 jobQueueName: test-queue
