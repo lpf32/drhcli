@@ -95,6 +95,7 @@ func NewS3Client(ctx context.Context, bucket, prefix, endpoint, region, sourceTy
 			log.Printf("S3> Source Endpoint URL is set to %s\n", url)
 			o.EndpointResolver = s3.EndpointResolverFromURL(url)
 		}
+		o.UsePathStyle = true
 		if cred.noSignRequest {
 			// log.Println("noSignRequest")
 			o.Credentials = aws.AnonymousCredentials{}
