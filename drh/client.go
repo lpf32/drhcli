@@ -70,7 +70,7 @@ func getEndpointURL(region, sourceType string) (url string) {
 func NewS3Client(ctx context.Context, bucket, prefix, endpoint, region, sourceType string, cred *S3Credentials) *S3Client {
 
 	// config, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
-	config, err := config.LoadDefaultConfig(ctx)
+	config, err := config.LoadDefaultConfig(ctx, config.WithClientLogMode(aws.LogRequest|aws.LogResponse))
 	if err != nil {
 		log.Fatalf("Failed to load default SDK config to create S3 client - %s\n", err.Error())
 	}
