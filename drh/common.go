@@ -124,10 +124,14 @@ func escape(str *string) string {
 }
 
 func removePrefix(key, prefix *string) *string {
-	if prefix == nil || *prefix == "" {
+	if prefix == nil || *prefix == "" || *prefix == "/" {
 		return key
 	}
-	newkey := strings.Replace(*key, *prefix+"/", "", 1)
+	delimiter := ""
+	if !strings.HasSuffix(*prefix, "/") {
+		delimiter = "/"
+	}
+	newkey := strings.Replace(*key, *prefix+delimiter, "", 1)
 	return &newkey
 }
 
